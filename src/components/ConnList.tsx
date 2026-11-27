@@ -114,7 +114,7 @@ function ResizeHandle({ width, onChange, onCommit }: { width: number; onChange: 
 export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props) {
   const { t, tx } = useI18n();
   const toast = useToast();
-  const { conns, loaded, reorder } = useConns();
+  const { conns, loaded, reorder, move } = useConns();
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [editor, setEditor] = useState<{ open: boolean; conn: ConnView | null; group?: string }>({ open: false, conn: null });
@@ -122,7 +122,8 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
   const [deleting, setDeleting] = useState<ConnView | null>(null);
   const [inUse, setInUse] = useState<{ conn: ConnView; users: ConnView[] } | null>(null);
   const [collapsed, toggleGroup] = useCollapsed("ssh");
-  const [drag, setDrag] = useState<{ id: string; order: string[] } | null>(null);
+  /** 拖动中的连接、临时顺序、原分组和要放进的分组。 */
+  const [drag, setDrag] = useState<{ id: string; order: string[]; from: string; group: string } | null>(null);
   const [storedGroups, setStoredGroups] = useState(loadGroups);
   const [naming, setNaming] = useState(false);
   const [groupName, setGroupName] = useState("");
@@ -144,10 +145,15 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
   }, [filtered, drag]);
 
   // 有名字的分组按首次出现的顺序排在前面，未分组的放最后。
+  // 拖动时分组顺序按拖动前算，被拖空的分组和“未分组”也留着，可以拖进去。
   const groups = useMemo(() => {
     const map = new Map<string, ConnView[]>();
+    if (drag) {
+      for (const c of filtered) map.set(c.group ?? "", []);
+      map.set("", []);
+    }
     for (const c of shown) {
-      const g = c.group ?? "";
+      const g = drag?.id === c.id ? drag.group : (c.group ?? "");
       if (!map.has(g)) map.set(g, []);
       map.get(g)!.push(c);
     }
@@ -156,7 +162,7 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
     const list = [...map.entries()];
     if (ungrouped) list.push(["", ungrouped]);
     return list;
-  }, [shown]);
+  }, [shown, filtered, drag]);
 
   // 显式新建的分组排在前面，没有连接时也显示；其余分组仍按连接里的顺序。
   const rows = useMemo(() => {
@@ -176,6 +182,8 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
     }
     return list;
   }, [groups, storedGroups, q]);
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const knownGroups = useMemo(() => {
     const names = new Set(storedGroups);
@@ -252,51 +260,79 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
   ];
 
   // 用指针事件拖动排序：Windows 上原生的文件拖放处理会让 WebView 里的 HTML5 拖放失效。
-  const pointer = useRef<{ id: string; x: number; y: number; order: string[] | null } | null>(null);
+  // 拖到其他分组的连接上就插到那个位置，拖到分组标题上就放到该分组最后。
+  const pointer = useRef<{ id: string; x: number; y: number; from: string; group: string; order: string[] | null } | null>(null);
   useEffect(() => {
-    const move = (e: PointerEvent) => {
+    const groupOf = (id: string) => (id === pointer.current?.id ? pointer.current.group : (byId.get(id)?.group ?? ""));
+    /** 按界面上分组的先后排好，保证分组顺序不因为拖动改变。 */
+    const byRows = (order: string[]) => {
+      const rank = new Map(rowsRef.current.map(([g], i) => [g, i]));
+      const at = (id: string) => rank.get(groupOf(id)) ?? rank.size;
+      return [...order].sort((a, b) => at(a) - at(b));
+    };
+    const onMove = (e: PointerEvent) => {
       const p = pointer.current;
       if (!p) return;
       if (!p.order) {
         if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_THRESHOLD) return;
-        p.order = conns.map((x) => x.id);
-        setDrag({ id: p.id, order: p.order });
+        p.order = byRows(conns.map((x) => x.id));
+        setDrag({ id: p.id, order: p.order, from: p.from, group: p.group });
       }
-      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-conn]")?.dataset.conn;
-      // 只能在同一分组内拖动。
-      if (!over || over === p.id || (byId.get(over)?.group ?? "") !== (byId.get(p.id)?.group ?? "")) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const over = el?.closest<HTMLElement>("[data-conn]")?.dataset.conn;
+      const header = el?.closest<HTMLElement>("[data-group]")?.dataset.group;
       const { order } = p;
-      const next = order.filter((id) => id !== p.id);
-      next.splice(next.indexOf(over) + (order.indexOf(over) > order.indexOf(p.id) ? 1 : 0), 0, p.id);
-      if (next.every((id, i) => id === order[i])) return;
+      let next = order.filter((id) => id !== p.id);
+      let group = p.group;
+      if (over && over !== p.id) {
+        group = byId.get(over)?.group ?? "";
+        next.splice(next.indexOf(over) + (order.indexOf(over) > order.indexOf(p.id) ? 1 : 0), 0, p.id);
+      } else if (header !== undefined && header !== p.group) {
+        group = header;
+        let last = next.length - 1;
+        while (last >= 0 && (byId.get(next[last])?.group ?? "") !== header) last--;
+        // 分组里还没有连接时顺序不变，提交时会按分组重新排好。
+        if (last >= 0) next.splice(last + 1, 0, p.id);
+        else next = order;
+      } else return;
+      if (group === p.group && next.every((id, i) => id === order[i])) return;
       p.order = next;
-      setDrag({ id: p.id, order: next });
+      p.group = group;
+      setDrag({ id: p.id, order: next, from: p.from, group });
     };
     const end = (commit: boolean) => () => {
       const p = pointer.current;
+      if (!p?.order) {
+        pointer.current = null;
+        return;
+      }
+      if (commit) {
+        const ids = byRows(p.order);
+        if (p.group !== p.from) move(p.id, p.group, ids);
+        else reorder(ids);
+      }
       pointer.current = null;
-      if (!p?.order) return;
-      if (commit) reorder(p.order);
       setDrag(null);
     };
     const [up, cancel] = [end(true), end(false)];
-    window.addEventListener("pointermove", move);
+    window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("blur", cancel);
     return () => {
-      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("blur", cancel);
     };
-  }, [conns, byId, reorder]);
+  }, [conns, byId, reorder, move]);
 
   const dragProps = (c: ConnView): HTMLAttributes<HTMLDivElement> => {
     if (searching) return {};
     return {
       onPointerDown: (e) => {
-        if (e.button === 0) pointer.current = { id: c.id, x: e.clientX, y: e.clientY, order: null };
+        const g = c.group ?? "";
+        if (e.button === 0) pointer.current = { id: c.id, x: e.clientX, y: e.clientY, from: g, group: g, order: null };
       },
     };
   };
@@ -410,9 +446,10 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
             // 只有未分组的连接时不显示分组标题。
             if (!g && rows.length === 1) return <div key="">{list.map(item)}</div>;
             const folded = collapsed.has(g) && !searching;
+            const target = !!drag && drag.group === g && drag.group !== drag.from;
             return (
-              <div key={g || "ungrouped"} className="group/g mb-1">
-                <div className="flex items-center gap-0.5 rounded-md pr-0.5 text-[11px] font-semibold tracking-wide text-muted">
+              <div key={g || "ungrouped"} className={cx("group/g mb-1 rounded-lg", target && "bg-accent/10 ring-1 ring-accent/40")}>
+                <div data-group={g} className="flex items-center gap-0.5 rounded-md pr-0.5 text-[11px] font-semibold tracking-wide text-muted">
                   <button
                     className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-left hover:text-ink"
                     onClick={() => toggleGroup(g)}

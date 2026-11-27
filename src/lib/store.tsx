@@ -123,6 +123,8 @@ interface ConnsCtx {
   refresh: () => Promise<void>;
   /** 本地先调整顺序再提交，拖动时界面不闪动。 */
   reorder: (ids: string[]) => Promise<void>;
+  /** 移到另一个分组并调整顺序，同样先改本地。 */
+  move: (id: string, group: string, ids: string[]) => Promise<void>;
 }
 
 const ConnsContext = createContext<ConnsCtx>(null!);
@@ -148,14 +150,16 @@ function ConnsProvider({ children }: { children: ReactNode }) {
     return events.onConnChanged(refresh);
   }, [refresh]);
 
-  const reorder = useCallback(
-    async (ids: string[]) => {
+  const apply = useCallback(
+    async (ids: string[], moved: { id: string; group: string } | null, submit: () => Promise<void>) => {
       setConns((list) => {
         const rank = new Map(ids.map((id, i) => [id, i]));
-        return [...list].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
+        return list
+          .map((c) => (c.id === moved?.id ? { ...c, group: moved.group } : c))
+          .sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
       });
       try {
-        await connApi.reorder(ids);
+        await submit();
       } catch (e) {
         toast.error(e);
         refresh();
@@ -164,7 +168,13 @@ function ConnsProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
-  const value = useMemo(() => ({ conns, loaded, refresh, reorder }), [conns, loaded, refresh, reorder]);
+  const reorder = useCallback((ids: string[]) => apply(ids, null, () => connApi.reorder(ids)), [apply]);
+  const move = useCallback(
+    (id: string, group: string, ids: string[]) => apply(ids, { id, group }, () => connApi.move(id, group, ids)),
+    [apply],
+  );
+
+  const value = useMemo(() => ({ conns, loaded, refresh, reorder, move }), [conns, loaded, refresh, reorder, move]);
   return <ConnsContext.Provider value={value}>{children}</ConnsContext.Provider>;
 }
 

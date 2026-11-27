@@ -41,6 +41,12 @@ pub async fn conn_reorder(s: S<'_>, ids: Vec<String>) -> ApiResult<()> {
     s.conns.reorder(&ids)
 }
 
+/// 把连接移到另一个分组（空字符串表示未分组），同时按 ids 调整顺序。
+#[tauri::command]
+pub async fn conn_move(s: S<'_>, id: String, group: String, ids: Vec<String>) -> ApiResult<()> {
+    s.conns.move_to_group(&id, &group, &ids)
+}
+
 #[tauri::command]
 pub async fn conn_test(s: S<'_>, req: SaveConnReq) -> ApiResult<TestResult> {
     s.conns.test(req).await

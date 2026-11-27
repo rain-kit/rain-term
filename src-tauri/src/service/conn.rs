@@ -269,6 +269,14 @@ impl ConnService {
         Ok(())
     }
 
+    /// 拖到其他分组：改分组并按 ids 重排，一次写入。
+    pub fn move_to_group(&self, id: &str, group: &str, ids: &[String]) -> ApiResult<()> {
+        self.store.move_to_group(id, group, ids)?;
+        info!(conn = %id, "连接已移到其他分组");
+        self.changed();
+        Ok(())
+    }
+
     /// 导出为 JSON，不含密码，附带工具配置。ids 为空时导出全部；导出部分连接时自动带上它们的跳板机。
     pub fn export(&self, ids: &[String], tools: &ToolsConfig) -> ApiResult<(String, usize)> {
         let list = self.store.list()?;
@@ -824,6 +832,26 @@ mod tests {
             .map(|v| v.conn.name)
             .collect();
         assert_eq!(names, ["c", "a", "b"]);
+    }
+
+    #[test]
+    fn move_to_group() {
+        let f = fixture();
+        let ids: Vec<String> = ["a", "b", "c"]
+            .iter()
+            .map(|n| create(&f.svc, ssh(n, "")).conn.id)
+            .collect();
+        let order = [ids[1].clone(), ids[0].clone(), ids[2].clone()];
+        f.svc.move_to_group(&ids[0], " 生产 ", &order).unwrap();
+        let list = f.svc.list().unwrap();
+        let names: Vec<_> = list.iter().map(|v| v.conn.name.as_str()).collect();
+        assert_eq!(names, ["b", "a", "c"]);
+        assert_eq!(list[1].conn.group, "生产");
+        assert_eq!(list[0].conn.group, "", "其他连接的分组不变");
+
+        f.svc.move_to_group(&ids[0], "", &order).unwrap();
+        assert_eq!(f.svc.get(&ids[0]).unwrap().conn.group, "", "可以移回未分组");
+        assert!(f.svc.move_to_group("missing", "x", &order).is_err());
     }
 
     #[test]

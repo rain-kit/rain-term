@@ -132,15 +132,32 @@ impl ConnStore {
     /// 按给定 ID 顺序重排，未列出的连接保持原相对顺序排在最后。
     pub fn reorder(&self, ids: &[String]) -> Result<(), StoreError> {
         self.modify(|list| {
-            let rank: HashMap<&str, usize> = ids
-                .iter()
-                .enumerate()
-                .map(|(i, id)| (id.as_str(), i))
-                .collect();
-            list.sort_by_key(|c| rank.get(c.id.as_str()).copied().unwrap_or(usize::MAX));
+            sort_by_ids(list, ids);
             Ok::<_, StoreError>(())
         })
     }
+
+    /// 把连接移到另一个分组（空字符串表示未分组），同时按给定 ID 顺序重排。
+    pub fn move_to_group(&self, id: &str, group: &str, ids: &[String]) -> Result<(), StoreError> {
+        self.modify(|list| {
+            let c = list
+                .iter_mut()
+                .find(|c| c.id == id)
+                .ok_or(StoreError::NotFound)?;
+            c.group = group.trim().to_string();
+            sort_by_ids(list, ids);
+            Ok::<_, StoreError>(())
+        })
+    }
+}
+
+fn sort_by_ids(list: &mut [Connection], ids: &[String]) {
+    let rank: HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+    list.sort_by_key(|c| rank.get(c.id.as_str()).copied().unwrap_or(usize::MAX));
 }
 
 #[cfg(test)]

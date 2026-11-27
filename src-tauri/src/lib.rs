@@ -49,6 +49,7 @@ pub fn run() {
             commands::conn::conn_duplicate,
             commands::conn::conn_delete,
             commands::conn::conn_reorder,
+            commands::conn::conn_move,
             commands::conn::conn_test,
             commands::conn::conn_reveal_password,
             commands::conn::conn_export,

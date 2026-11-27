@@ -54,6 +54,8 @@ export const connApi = {
   duplicate: (id: string) => invoke<ConnView>("conn_duplicate", { id }),
   remove: (id: string) => invoke<void>("conn_delete", { id }),
   reorder: (ids: string[]) => invoke<void>("conn_reorder", { ids }),
+  /** 移到另一个分组（空字符串表示未分组），同时按 ids 调整顺序。 */
+  move: (id: string, group: string, ids: string[]) => invoke<void>("conn_move", { id, group, ids }),
   /** 用编辑器里尚未保存的内容测试连接。 */
   test: (req: SaveConnReq) => invoke<TestResult>("conn_test", { req }),
   /** 验证电脑密码后返回保存的密码；取消验证时返回 null。 */
