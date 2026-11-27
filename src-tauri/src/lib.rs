@@ -70,7 +70,7 @@ pub fn run() {
             commands::rdp::rdp_release_all,
             commands::rdp::rdp_resize,
             commands::rdp::rdp_clipboard,
-            commands::rdp::rdp_ack,
+            commands::rdp::rdp_frame,
             commands::rdp::rdp_close,
             commands::sftp::sftp_open,
             commands::sftp::sftp_list,

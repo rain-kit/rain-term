@@ -1,5 +1,5 @@
 use tauri::State;
-use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::ipc::{Channel, InvokeResponseBody, Response};
 
 use crate::app::AppState;
 use crate::core::rdp::input::InputEvent;
@@ -8,8 +8,8 @@ use crate::service::rdp::{RdpEvent, RdpSink};
 
 type S<'a> = State<'a, AppState>;
 
-/// 打开远程桌面，返回会话 ID。画面和鼠标指针以二进制消息（前端收到 ArrayBuffer）推到 on_event，
-/// 分辨率、剪贴板和结束通知是 JSON；用户主动关闭时不推结束通知。
+/// 打开远程桌面，返回会话 ID。鼠标指针以二进制消息（前端收到 ArrayBuffer）推到 on_event，
+/// 剪贴板和结束通知是 JSON；用户主动关闭时不推结束通知。画面由前端调用 rdp_frame 取。
 #[tauri::command]
 pub async fn rdp_open(
     s: S<'_>,
@@ -64,11 +64,11 @@ pub async fn rdp_clipboard(s: S<'_>, id: String, text: String) -> ApiResult<()> 
     s.rdp.clipboard(&id, text)
 }
 
-/// 前端画完了一条画面消息。
+/// 等下一条画面，以二进制返回（前端收到 ArrayBuffer）；会话结束时返回空数据。
+/// 大块数据走 Channel 要先 eval 再 fetch，直接作为命令返回值只需一次往返。
 #[tauri::command]
-pub async fn rdp_ack(s: S<'_>, id: String) -> ApiResult<()> {
-    s.rdp.ack(&id);
-    Ok(())
+pub async fn rdp_frame(s: S<'_>, id: String) -> ApiResult<Response> {
+    Ok(Response::new(s.rdp.frame(&id).await?.unwrap_or_default()))
 }
 
 #[tauri::command]

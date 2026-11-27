@@ -13,7 +13,6 @@ import { Button, cx, IconButton } from "./ui";
 export type RdpStatus = "connecting" | "connected" | "closed";
 
 /** 与 src-tauri/src/core/rdp/session.rs 的 MSG_* 一致。 */
-const MSG_FRAME = 1;
 const MSG_POINTER = 2;
 const MSG_POINTER_DEFAULT = 3;
 const MSG_POINTER_HIDDEN = 4;
@@ -36,11 +35,19 @@ function physicalSize(el: HTMLElement) {
   return w > 0 && h > 0 ? { w, h } : null;
 }
 
-/** `[1][u16 块数]`，每块 `[u16 x][u16 y][u16 宽][u16 高][RGBA]`，均为小端。 */
-function drawFrame(ctx: CanvasRenderingContext2D, d: Uint8Array<ArrayBuffer>) {
+/**
+ * `[u16 画面宽][u16 画面高][u16 块数]`，每块 `[u16 x][u16 y][u16 宽][u16 高][RGBA]`，均为小端。
+ * 画面大小变了先调整 canvas，返回是否调整过。
+ */
+function drawFrame(c: HTMLCanvasElement, ctx: CanvasRenderingContext2D, d: Uint8Array<ArrayBuffer>) {
   const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
-  const count = dv.getUint16(1, true);
-  let off = 3;
+  const [width, height, count] = [0, 2, 4].map((k) => dv.getUint16(k, true));
+  const resized = c.width !== width || c.height !== height;
+  if (resized) {
+    c.width = width;
+    c.height = height;
+  }
+  let off = 6;
   for (let i = 0; i < count; i++) {
     const [x, y, w, h] = [0, 2, 4, 6].map((k) => dv.getUint16(off + k, true));
     off += 8;
@@ -48,6 +55,7 @@ function drawFrame(ctx: CanvasRenderingContext2D, d: Uint8Array<ArrayBuffer>) {
     if (w && h) ctx.putImageData(new ImageData(new Uint8ClampedArray(d.buffer, d.byteOffset + off, len), w, h), x, y);
     off += len;
   }
+  return resized;
 }
 
 /** `[2][u16 宽][u16 高][u16 热点 x][u16 热点 y][RGBA]` 转成 CSS cursor。 */
@@ -155,16 +163,20 @@ export default function RdpView({
   const connect = () => {
     const el = box.current;
     const c = canvas.current;
-    const ctx = c?.getContext("2d");
+    const ctx = c?.getContext("2d", { alpha: false });
     if (!el || !c || !ctx) return;
     const my = ++gen.current;
-    let sid: string | null = null;
     let ended = false;
-    /** 拿到会话 ID 之前画完的画面数，拿到后补发确认。 */
-    let unacked = 0;
-    const ack = () => {
-      if (sid) rdpApi.ack(sid).catch(() => {});
-      else unacked++;
+    // 画完一条再取下一条；会话结束或被关闭时取到 null。
+    const pull = async (id: string) => {
+      for (;;) {
+        const d = await rdpApi.frame(id).catch(() => null);
+        if (!d || gen.current !== my) return;
+        if (drawFrame(c, ctx, d)) {
+          layout();
+          setSize({ width: c.width, height: c.height });
+        }
+      }
     };
     const px = physicalSize(el) ?? FALLBACK_SIZE;
     setStatus({ s: "connecting" });
@@ -176,22 +188,13 @@ export default function RdpView({
         Math.round(dpr() * 100),
         (d) => {
           if (gen.current !== my) return;
-          if (d[0] === MSG_FRAME) {
-            drawFrame(ctx, d);
-            ack();
-          } else if (d[0] === MSG_POINTER) c.style.cursor = pointerCursor(d);
+          if (d[0] === MSG_POINTER) c.style.cursor = pointerCursor(d);
           else if (d[0] === MSG_POINTER_DEFAULT) c.style.cursor = "default";
           else if (d[0] === MSG_POINTER_HIDDEN) c.style.cursor = "none";
         },
         (n: RdpNotice) => {
           if (gen.current !== my) return;
-          if (n.type === "size") {
-            // 直接改 canvas：之后紧跟着的画面要画在新尺寸上。
-            c.width = n.width;
-            c.height = n.height;
-            layout();
-            setSize({ width: n.width, height: n.height });
-          } else if (n.type === "clipboard") {
+          if (n.type === "clipboard") {
             lastClip.current = n.text;
             writeText(n.text).catch(toast.error);
           } else {
@@ -206,9 +209,8 @@ export default function RdpView({
           if (gen.current !== my) rdpApi.close(id).catch(() => {});
           return;
         }
-        sid = id;
         session.current = id;
-        for (; unacked > 0; unacked--) rdpApi.ack(id).catch(() => {});
+        pull(id);
         setStatus({ s: "connected" });
         if (document.activeElement === el) syncClipboard();
       })

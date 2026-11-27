@@ -19,9 +19,15 @@ use ironrdp_connector::{
 use ironrdp_core::WriteBuf;
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_dvc::DrdynvcClient;
+use ironrdp_egfx::client::{GraphicsPipelineClient, GraphicsPipelineHandler};
+use ironrdp_egfx::pdu::{
+    CapabilitiesV8Flags, CapabilitiesV10Flags, CapabilitiesV103Flags, CapabilitiesV104Flags,
+    CapabilitiesV107Flags, CapabilitySet,
+};
 use ironrdp_pdu::gcc;
 use ironrdp_pdu::nego::FailureCode;
 use ironrdp_pdu::rdp::capability_sets::{MajorPlatformType, RailSupportLevel};
+use ironrdp_pdu::rdp::client_info::CompressionType;
 use ironrdp_tokio::{MovableTokioFramed, NetworkClient};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -33,7 +39,7 @@ use crate::i18n::Msg;
 use crate::model::{RDP_MAX_SIZE, RDP_MIN_SIZE, RdpParams};
 use crate::util::join_host_port;
 use cert::{Check, CertStore, fingerprint};
-pub use session::{Command, Event, Flow, run};
+pub use session::{Command, Event, Frames, run};
 
 /// TCP 连接、TLS 握手和登录各自的超时，等用户确认证书的时间不计入。
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -162,12 +168,47 @@ impl RdpTarget {
             performance_flags: Default::default(),
             license_cache: None,
             timezone_info: Default::default(),
-            compression_type: None,
+            compression_type: Some(CompressionType::K64),
             enable_server_pointer: true,
             pointer_software_rendering: false,
             multitransport_flags: None,
-            support_dyn_vc_gfx_protocol: false,
+            support_dyn_vc_gfx_protocol: true,
         }
+    }
+}
+
+/// 图形管道（RDPGFX）：服务器改用 RemoteFX 渐进编码、ClearCodec 等现代编码发画面，
+/// 比旧的位图更新省带宽。没有 H.264 解码器，只声明不带 AVC 的能力集。
+struct Gfx;
+
+impl GraphicsPipelineHandler for Gfx {
+    fn capabilities(&self) -> Vec<CapabilitySet> {
+        vec![
+            CapabilitySet::V10_7 {
+                flags: CapabilitiesV107Flags::SMALL_CACHE | CapabilitiesV107Flags::AVC_DISABLED,
+            },
+            CapabilitySet::V10_6 {
+                flags: CapabilitiesV104Flags::SMALL_CACHE | CapabilitiesV104Flags::AVC_DISABLED,
+            },
+            CapabilitySet::V10_5 {
+                flags: CapabilitiesV104Flags::SMALL_CACHE | CapabilitiesV104Flags::AVC_DISABLED,
+            },
+            CapabilitySet::V10_4 {
+                flags: CapabilitiesV104Flags::SMALL_CACHE | CapabilitiesV104Flags::AVC_DISABLED,
+            },
+            CapabilitySet::V10_3 {
+                flags: CapabilitiesV103Flags::AVC_DISABLED,
+            },
+            CapabilitySet::V10_2 {
+                flags: CapabilitiesV10Flags::SMALL_CACHE | CapabilitiesV10Flags::AVC_DISABLED,
+            },
+            CapabilitySet::V10 {
+                flags: CapabilitiesV10Flags::SMALL_CACHE | CapabilitiesV10Flags::AVC_DISABLED,
+            },
+            CapabilitySet::V8 {
+                flags: CapabilitiesV8Flags::SMALL_CACHE,
+            },
+        ]
     }
 }
 
@@ -357,7 +398,9 @@ async fn secure(
     let addr = t.addr();
     let client_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
     let mut connector = ClientConnector::new(t.config(), client_addr).with_static_channel(
-        DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new()))),
+        DrdynvcClient::new()
+            .with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())))
+            .with_dynamic_channel(GraphicsPipelineClient::new(Box::new(Gfx), None)),
     );
     if t.clipboard {
         connector.attach_static_channel(CliprdrClient::new(Box::new(

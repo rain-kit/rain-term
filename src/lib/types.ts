@@ -225,7 +225,6 @@ export type SftpEvent =
 
 /** 会话的 JSON 通知；closed 一定是最后一条，用户主动关闭时不推送。 */
 export type RdpNotice =
-  | { type: "size"; width: number; height: number }
   | { type: "clipboard"; text: string }
   | { type: "closed"; error?: I18nMsg };
 

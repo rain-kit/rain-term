@@ -13,18 +13,16 @@ use super::conn::ConnService;
 use super::hostkey::HostKeyService;
 use super::pool::{Client, ClientPool};
 use crate::core::rdp::input::InputEvent;
-use crate::core::rdp::{self, BoxStream, Command, Event, Flow, RdpTarget};
+use crate::core::rdp::{self, BoxStream, Command, Event, Frames, RdpTarget};
 use crate::error::{self, ApiResult};
 use crate::i18n::Msg;
 use crate::model::{ConnParams, Connection, RdpParams, RdpResolution};
 use crate::util::new_id;
 
-/// 会话推给前端的通知；画面和指针走二进制消息。
+/// 会话推给前端的通知；指针走二进制消息，画面由前端调用 [`RdpService::frame`] 取。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum RdpNotice {
-    /// 远程分辨率。
-    Size { width: u16, height: u16 },
     /// 远程复制的文本，由前端写入本机剪贴板。
     Clipboard { text: String },
     /// 会话结束，一定是最后一条；用户主动关闭时不发。
@@ -36,7 +34,7 @@ pub enum RdpNotice {
 
 #[derive(Debug)]
 pub enum RdpEvent {
-    /// 画面或指针，格式见 core::rdp::session。
+    /// 鼠标指针，格式见 core::rdp::session。
     Data(Vec<u8>),
     Notice(RdpNotice),
 }
@@ -46,8 +44,10 @@ pub type RdpSink = Box<dyn Fn(RdpEvent) + Send + Sync>;
 
 struct Session {
     commands: mpsc::UnboundedSender<Command>,
-    flow: Arc<Flow>,
+    frames: Arc<Frames>,
     cancel: CancellationToken,
+    /// 会话结束（包括被关闭）时取消，让等画面的请求返回。
+    done: CancellationToken,
 }
 
 pub struct RdpService {
@@ -114,13 +114,15 @@ impl RdpService {
 
         let id = new_id();
         let (tx, rx) = mpsc::unbounded_channel();
-        let flow = Arc::new(Flow::default());
+        let frames = Arc::new(Frames::default());
+        let done = cancel.child_token();
         self.sessions.lock().unwrap().insert(
             id.clone(),
             Session {
                 commands: tx,
-                flow: flow.clone(),
+                frames: frames.clone(),
                 cancel: cancel.clone(),
+                done: done.clone(),
             },
         );
         info!(conn = %conn.name, session = %id, elapsed_ms = connected.elapsed.as_millis() as u64, "远程桌面已连接");
@@ -135,14 +137,12 @@ impl RdpService {
         tokio::spawn(async move {
             let emit = |ev: Event| {
                 sink(match ev {
-                    Event::Frame(b) | Event::Pointer(b) => RdpEvent::Data(b),
-                    Event::Size { width, height } => {
-                        RdpEvent::Notice(RdpNotice::Size { width, height })
-                    }
+                    Event::Pointer(b) => RdpEvent::Data(b),
                     Event::Clipboard(text) => RdpEvent::Notice(RdpNotice::Clipboard { text }),
                 })
             };
-            let mut end = rdp::run(connected, rx, emit, flow, cancel.clone()).await;
+            let mut end = rdp::run(connected, rx, emit, frames, cancel.clone()).await;
+            done.cancel();
             if let Some(j) = &jump
                 && !j.alive()
             {
@@ -245,10 +245,17 @@ impl RdpService {
         self.send(id, Command::Clipboard(text))
     }
 
-    /// 前端画完了一条画面消息。
-    pub fn ack(&self, id: &str) {
-        if let Some(s) = self.sessions.lock().unwrap().get(id) {
-            s.flow.ack();
+    /// 等下一条画面，格式见 core::rdp::session；会话结束时返回 None。
+    /// 前端画完一条再取下一条，取画面本身就是流量控制。
+    pub async fn frame(&self, id: &str) -> ApiResult<Option<Vec<u8>>> {
+        let (frames, done) = {
+            let sessions = self.sessions.lock().unwrap();
+            let s = sessions.get(id).ok_or_else(|| error::RDP_NOT_FOUND.err())?;
+            (s.frames.clone(), s.done.clone())
+        };
+        tokio::select! {
+            f = frames.next() => Ok(Some(f)),
+            _ = done.cancelled() => Ok(None),
         }
     }
 

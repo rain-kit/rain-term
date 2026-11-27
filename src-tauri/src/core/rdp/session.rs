@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ironrdp_cliprdr::CliprdrClient;
@@ -30,12 +29,9 @@ use crate::i18n::Msg;
 
 /// 合并画面更新的间隔，约 60 帧每秒。
 const FLUSH_INTERVAL: Duration = Duration::from_millis(16);
-/// 前端还没画完的画面消息超过这么多条时暂停发送，期间的更新合并到下一条。
-const MAX_IN_FLIGHT: usize = 2;
 /// 待发送区域超过这么多块时合并成一块。
 const MAX_RECTS: usize = 32;
 
-pub const MSG_FRAME: u8 = 1;
 pub const MSG_POINTER: u8 = 2;
 pub const MSG_POINTER_DEFAULT: u8 = 3;
 pub const MSG_POINTER_HIDDEN: u8 = 4;
@@ -57,40 +53,43 @@ pub enum Command {
     Clipboard(String),
 }
 
-/// 会话推给前端的数据。
+/// 会话推给前端的数据；画面不走这里，由前端从 [`Frames`] 取。
 #[derive(Debug)]
 pub enum Event {
-    /// 画面更新，格式见 [`encode_frame`]；前端画完后要调用 [`Flow::ack`]。
-    Frame(Vec<u8>),
     /// 鼠标指针形状，格式见 [`encode_pointer`]。
     Pointer(Vec<u8>),
-    /// 远程分辨率，连接和调整分辨率后发送。
-    Size { width: u16, height: u16 },
     /// 远程复制的文本。
     Clipboard(String),
 }
 
-/// 画面消息的流量控制：前端画完一条确认一次。
+/// 画面信箱：最多放一条，前端取走后才编码下一条，期间的更新合并进去。
+/// 前端画上一条的同时，下一条已经在准备，两边都不用等。
 #[derive(Default)]
-pub struct Flow {
-    in_flight: AtomicUsize,
-    acked: Notify,
+pub struct Frames {
+    slot: Mutex<Option<Vec<u8>>>,
+    ready: Notify,
+    taken: Notify,
 }
 
-impl Flow {
-    pub fn ack(&self) {
-        let _ = self
-            .in_flight
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1));
-        self.acked.notify_one();
+impl Frames {
+    /// 等下一条画面，格式见 [`encode_frame`]。
+    pub async fn next(&self) -> Vec<u8> {
+        loop {
+            if let Some(f) = self.slot.lock().unwrap().take() {
+                self.taken.notify_one();
+                return f;
+            }
+            self.ready.notified().await;
+        }
     }
 
-    fn busy(&self) -> bool {
-        self.in_flight.load(Ordering::SeqCst) >= MAX_IN_FLIGHT
+    fn full(&self) -> bool {
+        self.slot.lock().unwrap().is_some()
     }
 
-    fn sent(&self) {
-        self.in_flight.fetch_add(1, Ordering::SeqCst);
+    fn put(&self, frame: Vec<u8>) {
+        *self.slot.lock().unwrap() = Some(frame);
+        self.ready.notify_one();
     }
 }
 
@@ -182,12 +181,14 @@ impl Dirty {
     }
 }
 
-/// `[1][u16 块数]`，每块 `[u16 x][u16 y][u16 宽][u16 高][RGBA 像素]`，均为小端。
+/// `[u16 画面宽][u16 画面高][u16 块数]`，每块 `[u16 x][u16 y][u16 宽][u16 高][RGBA 像素]`，均为小端。
+/// 带上画面大小，前端据此调整 canvas，不用依赖另一条通道上的通知先到。
 fn encode_frame(image: &DecodedImage, rects: &[Rect]) -> Vec<u8> {
     let size: usize = rects.iter().map(|r| 8 + r.area() * 4).sum();
-    let mut out = Vec::with_capacity(3 + size);
-    out.push(MSG_FRAME);
-    out.extend_from_slice(&(rects.len() as u16).to_le_bytes());
+    let mut out = Vec::with_capacity(6 + size);
+    for v in [image.width(), image.height(), rects.len() as u16] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
     let (data, stride) = (image.data(), image.stride());
     for r in rects {
         for v in [r.x, r.y, r.w, r.h] {
@@ -231,7 +232,9 @@ struct Session<E> {
     image: DecodedImage,
     input: Database,
     dirty: Dirty,
-    flow: Arc<Flow>,
+    /// 上次发出的画面大小，变了就整屏重发。
+    size: (u16, u16),
+    frames: Arc<Frames>,
     emit: E,
     clipboard: bool,
     local_text: Option<String>,
@@ -308,8 +311,25 @@ impl<E: FnMut(Event) + Send> Session<E> {
         if rects.is_empty() {
             return;
         }
-        self.flow.sent();
-        (self.emit)(Event::Frame(encode_frame(&self.image, &rects)));
+        self.frames.put(encode_frame(&self.image, &rects));
+    }
+
+    /// 分辨率调整后（重新激活或图形管道重置）画面被清空，整屏重发。
+    fn check_size(&mut self) {
+        let size = (self.image.width(), self.image.height());
+        if size == self.size {
+            return;
+        }
+        self.size = size;
+        self.dirty = Dirty::default();
+        if size.0 > 0 && size.1 > 0 {
+            self.dirty.add(Rect {
+                x: 0,
+                y: 0,
+                w: size.0,
+                h: size.1,
+            });
+        }
     }
 
     fn cliprdr(&mut self) -> Option<&mut CliprdrClient> {
@@ -440,11 +460,7 @@ impl<E: FnMut(Event) + Send> Session<E> {
                 }
                 self.image =
                     DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
-                self.dirty = Dirty::default();
-                (self.emit)(Event::Size {
-                    width: desktop_size.width,
-                    height: desktop_size.height,
-                });
+                self.size = (0, 0);
                 return Ok(());
             }
         }
@@ -501,7 +517,7 @@ pub async fn run(
     conn: Connected,
     mut commands: mpsc::UnboundedReceiver<Command>,
     emit: impl FnMut(Event) + Send,
-    flow: Arc<Flow>,
+    frames: Arc<Frames>,
     cancel: CancellationToken,
 ) -> Option<Msg> {
     let Connected {
@@ -529,20 +545,18 @@ pub async fn run(
         image: DecodedImage::new(PixelFormat::RgbA32, size.width, size.height),
         input: Database::new(),
         dirty: Dirty::default(),
-        flow: flow.clone(),
+        size: (0, 0),
+        frames: frames.clone(),
         emit,
         clipboard,
         local_text: None,
         pending_resize: None,
     };
-    (s.emit)(Event::Size {
-        width: size.width,
-        height: size.height,
-    });
 
     loop {
+        s.check_size();
         let flush_at = s.dirty.since.map(|t| t + FLUSH_INTERVAL);
-        let busy = flow.busy();
+        let busy = frames.full();
         let r: Result<(), End> = tokio::select! {
             _ = cancel.cancelled() => {
                 s.shutdown().await;
@@ -578,7 +592,7 @@ pub async fn run(
                 s.flush();
                 Ok(())
             }
-            _ = flow.acked.notified(), if busy => Ok(()),
+            _ = frames.taken.notified(), if busy => Ok(()),
         };
         if let Err(end) = r {
             if end.is_none() {
@@ -639,24 +653,28 @@ mod tests {
     fn frame_layout() {
         let image = DecodedImage::new(PixelFormat::RgbA32, 4, 2);
         let msg = encode_frame(&image, &[rect(1, 0, 2, 2)]);
-        assert_eq!(msg[0], MSG_FRAME);
-        assert_eq!(u16::from_le_bytes([msg[1], msg[2]]), 1);
-        assert_eq!(&msg[3..11], &[1, 0, 0, 0, 2, 0, 2, 0]);
-        assert_eq!(msg.len(), 3 + 8 + 2 * 2 * 4);
-        assert!(msg[11..].chunks(4).all(|px| px[3] == 0xFF));
+        assert_eq!(&msg[0..6], &[4, 0, 2, 0, 1, 0]);
+        assert_eq!(&msg[6..14], &[1, 0, 0, 0, 2, 0, 2, 0]);
+        assert_eq!(msg.len(), 6 + 8 + 2 * 2 * 4);
+        assert!(msg[14..].chunks(4).all(|px| px[3] == 0xFF));
     }
 
-    #[test]
-    fn flow_control() {
-        let f = Flow::default();
-        f.sent();
-        assert!(!f.busy());
-        f.sent();
-        assert!(f.busy());
-        f.ack();
-        assert!(!f.busy());
-        f.ack();
-        f.ack();
-        assert_eq!(f.in_flight.load(Ordering::SeqCst), 0, "多余的确认不会变成负数");
+    #[tokio::test]
+    async fn frames_mailbox() {
+        let f = Arc::new(Frames::default());
+        assert!(!f.full());
+        let waiter = tokio::spawn({
+            let f = f.clone();
+            async move { f.next().await }
+        });
+        tokio::task::yield_now().await;
+        f.put(vec![1]);
+        assert_eq!(waiter.await.unwrap(), vec![1], "先等后放也能取到");
+        assert!(!f.full());
+
+        f.put(vec![2]);
+        assert!(f.full(), "取走之前会话不再编码新画面");
+        assert_eq!(f.next().await, vec![2]);
+        assert!(!f.full());
     }
 }

@@ -127,8 +127,8 @@ export const sftpApi = {
 /** 远程桌面，见 src-tauri/src/service/rdp.rs。 */
 export const rdpApi = {
   /**
-   * 连接成功后返回会话 ID。画面和鼠标指针是二进制消息（格式见 src-tauri/src/core/rdp/session.rs），
-   * 其余是 JSON 通知。每画完一条画面消息要调用 ack，否则后端发出两条未确认的画面后会暂停。
+   * 连接成功后返回会话 ID。鼠标指针是二进制消息（格式见 src-tauri/src/core/rdp/session.rs），
+   * 其余是 JSON 通知。画面用 frame 逐条取。
    */
   open: (
     connId: string,
@@ -154,7 +154,12 @@ export const rdpApi = {
   resize: (id: string, width: number, height: number, scale: number) => invoke<void>("rdp_resize", { id, width, height, scale }),
   /** 本机剪贴板的文本，远程粘贴时使用。 */
   clipboard: (id: string, text: string) => invoke<void>("rdp_clipboard", { id, text }),
-  ack: (id: string) => invoke<void>("rdp_ack", { id }),
+  /** 等下一条画面（格式见 src-tauri/src/core/rdp/session.rs）；会话结束时返回 null。画完一条再取下一条。 */
+  frame: async (id: string) => {
+    const m = await invoke<ArrayBuffer | number[]>("rdp_frame", { id });
+    const d = m instanceof ArrayBuffer ? new Uint8Array(m) : Uint8Array.from(m);
+    return d.byteLength ? d : null;
+  },
   close: (id: string) => invoke<void>("rdp_close", { id }),
 };
 
