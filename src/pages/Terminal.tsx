@@ -52,6 +52,7 @@ export default function Terminal({
 
   const names = useMemo(() => new Map(conns.map((c) => [c.id, c.name])), [conns]);
   const production = useMemo(() => new Set(conns.filter((c) => c.production).map((c) => c.id)), [conns]);
+  const incognito = useMemo(() => new Set(conns.filter((c) => c.incognito).map((c) => c.id)), [conns]);
   const title = (tab: Tab) => {
     const name = names.get(tab.connId) ?? tab.name;
     return tab.seq > 1 ? `${name} (${tab.seq})` : name;
@@ -203,6 +204,7 @@ export default function Terminal({
                 title: title(x),
                 status: x.status,
                 danger: production.has(x.connId),
+                incognito: incognito.has(x.connId),
                 icon: x.kind === "sftp" ? <FolderOpen size={13} className="shrink-0 text-muted" /> : undefined,
               }))}
               active={active}
@@ -243,6 +245,7 @@ export default function Terminal({
                     name={title(x)}
                     active={x.key === active}
                     production={production.has(x.connId)}
+                    incognito={incognito.has(x.connId)}
                     onStatus={(s) => update(x.key, { status: s })}
                   />
                 ) : (

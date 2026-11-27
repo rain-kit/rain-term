@@ -1,4 +1,4 @@
-import { LoaderCircle, RotateCw } from "lucide-react";
+import { LoaderCircle, RotateCw, VenetianMask } from "lucide-react";
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../lib/i18n";
@@ -21,12 +21,15 @@ export function StatusBarHost({ children }: { children: ReactNode }) {
 export function ConnStatus({
   status,
   name,
+  incognito = false,
   connectingText,
   message,
   onReconnect,
 }: {
   status: TabStatus;
   name: string;
+  /** 无痕模式：已连接时在状态栏显示标记。 */
+  incognito?: boolean;
   connectingText: string;
   message?: string;
   onReconnect: () => void;
@@ -44,6 +47,15 @@ export function ConnStatus({
       <>
         <span className="size-2 shrink-0 rounded-full bg-emerald-500" />
         <span className="truncate text-muted">{t("status.connected", { name })}</span>
+        {incognito && (
+          <span
+            title={t("conn.incognitoHint")}
+            className="flex shrink-0 items-center gap-1 rounded bg-indigo-500/12 px-1.5 font-medium text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400"
+          >
+            <VenetianMask size={12} />
+            {t("status.incognito")}
+          </span>
+        )}
       </>
     ) : (
       <>

@@ -5,7 +5,7 @@ import { colorClass, connAddress } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns } from "../lib/store";
 import type { ConnView, TabKind } from "../lib/types";
-import { cx, ProdBadge } from "./ui";
+import { cx, IncognitoBadge, ProdBadge } from "./ui";
 
 const Kbd = ({ children }: { children: ReactNode }) => (
   <kbd className="rounded border border-line bg-subtle px-1 py-px font-sans text-[10px] text-ink">{children}</kbd>
@@ -114,6 +114,7 @@ export default function QuickConnect({
                     <div className="flex items-center gap-2">
                       <span className={cx("truncate text-[13px] font-medium", c.production && "text-red-600 dark:text-red-400")}>{c.name}</span>
                       {c.production && <ProdBadge />}
+                      {c.incognito && <IncognitoBadge />}
                       {c.group && <span className="shrink-0 rounded bg-subtle px-1.5 text-[11px] text-muted">{c.group}</span>}
                     </div>
                     <div className="truncate font-mono text-[11px] text-muted">{connAddress(c)}</div>

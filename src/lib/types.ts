@@ -90,6 +90,8 @@ export interface SshParams {
   /** 保活间隔（秒），0 表示不发送 */
   keepaliveSeconds: number;
   initDir?: string;
+  /** 无痕模式：定期清除服务器上的命令历史，本次会话不写入历史 */
+  incognito?: boolean;
   password?: string;
   keyPassphrase?: string;
 }

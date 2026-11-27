@@ -41,6 +41,9 @@ pub struct SshParams {
     /// 登录后进入的目录，为空时使用服务器默认目录。
     #[serde(skip_serializing_if = "String::is_empty")]
     pub init_dir: String,
+    /// 无痕模式：禁止本次会话把命令写入历史文件，并定期清除服务器上的历史。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito: bool,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub password: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -58,6 +61,7 @@ impl Default for SshParams {
             jump_id: String::new(),
             keepalive_seconds: DEFAULT_KEEPALIVE,
             init_dir: String::new(),
+            incognito: false,
             password: String::new(),
             key_passphrase: String::new(),
         }
@@ -368,12 +372,16 @@ pub(crate) mod tests {
         assert_eq!(v["auth"], "password");
         assert!(v.get("password").is_none());
         assert!(v.get("production").is_none(), "不是生产环境时不写这个字段");
+        assert!(v.get("incognito").is_none(), "未开无痕时不写这个字段");
         let back: Connection = serde_json::from_value(v).unwrap();
         assert_eq!(back, c);
 
         c.production = true;
+        let ConnParams::Ssh(p) = &mut c.params;
+        p.incognito = true;
         let v = serde_json::to_value(&c).unwrap();
         assert_eq!(v["production"], true);
+        assert_eq!(v["incognito"], true);
         assert_eq!(serde_json::from_value::<Connection>(v).unwrap(), c);
 
         let minimal: Connection =

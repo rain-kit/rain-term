@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { colorClass, connAddress } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns } from "../lib/store";
-import { cx, IconButton, ProdBadge } from "./ui";
+import { cx, IconButton, IncognitoBadge, ProdBadge } from "./ui";
 
 /** 选择经哪台服务器访问 GitHub：列出全部 SSH 连接，可搜索，最近选过的排在最前。 */
 export default function JumpPicker({
@@ -126,6 +126,7 @@ export default function JumpPicker({
                     <div className="flex items-center gap-2">
                       <span className={cx("truncate text-[13px] font-medium", c.production && "text-red-600 dark:text-red-400")}>{c.name}</span>
                       {c.production && <ProdBadge />}
+                      {c.incognito && <IncognitoBadge />}
                       {c.group && <span className="shrink-0 rounded bg-subtle px-1.5 text-[11px] text-muted">{c.group}</span>}
                     </div>
                     <div className="truncate font-mono text-[11px] text-muted">{connAddress(c)}</div>

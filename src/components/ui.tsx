@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Eye, EyeOff, X } from "lucide-react";
+import { Check, ChevronDown, Eye, EyeOff, VenetianMask, X } from "lucide-react";
 import {
   forwardRef,
   useEffect,
@@ -293,6 +293,20 @@ export function ProdBadge() {
   return (
     <span className="shrink-0 rounded bg-red-500/12 px-1 text-[10px] leading-4 font-semibold text-red-600 dark:bg-red-500/20 dark:text-red-400">
       {t("conn.production")}
+    </span>
+  );
+}
+
+/** 连接名旁边的“无痕”标记。 */
+export function IncognitoBadge() {
+  const { t } = useI18n();
+  return (
+    <span
+      title={t("conn.incognitoHint")}
+      className="flex shrink-0 items-center gap-0.5 rounded bg-indigo-500/12 px-1 text-[10px] leading-4 font-semibold text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400"
+    >
+      <VenetianMask size={11} />
+      {t("conn.incognito")}
     </span>
   );
 }

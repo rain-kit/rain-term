@@ -397,6 +397,18 @@ impl SshClient {
             || self.via.as_ref().is_some_and(|v| v.is_closed())
     }
 
+    /// 在一条一次性 channel 上执行命令，丢弃输出，等命令结束。用于无痕模式清理历史。
+    pub async fn exec(&self, command: &str) -> Result<(), SshError> {
+        let mut channel = self.handle.channel_open_session().await?;
+        channel.exec(false, command.as_bytes()).await?;
+        while let Some(msg) = channel.wait().await {
+            if matches!(msg, russh::ChannelMsg::Close) {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// 通过 direct-tcpip 让服务器连接 t，在这条 channel 上建立到 t 的 SSH 连接；jump 是本连接在提示里的名称。
     /// 返回的连接持有本连接，关闭时一起关闭。
     pub async fn connect_via(

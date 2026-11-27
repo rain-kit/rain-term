@@ -102,6 +102,7 @@ export default function TerminalView({
   name,
   active,
   production,
+  incognito = false,
   onStatus,
 }: {
   connId: string;
@@ -109,6 +110,8 @@ export default function TerminalView({
   active: boolean;
   /** 生产环境：任何粘贴（包括单行）都要确认。 */
   production: boolean;
+  /** 无痕模式：状态栏显示标记。 */
+  incognito?: boolean;
   onStatus: (s: TermStatus) => void;
 }) {
   const { t, tm } = useI18n();
@@ -404,6 +407,7 @@ export default function TerminalView({
         <ConnStatus
           status={status.s}
           name={name}
+          incognito={incognito}
           connectingText={t("terminal.connecting", { name })}
           message={status.message}
           onReconnect={reconnect}

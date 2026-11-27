@@ -9,7 +9,7 @@ import type { MessageKey } from "../locales/zh-CN";
 import type { ConnView } from "../lib/types";
 import ConnEditor from "./ConnEditor";
 import KindIcon from "./KindIcon";
-import { Button, Confirm, ContextMenu, cx, Dialog, Field, IconButton, Input, Menu, ProdBadge, type MenuItem } from "./ui";
+import { Button, Confirm, ContextMenu, cx, Dialog, Field, IconButton, IncognitoBadge, Input, Menu, ProdBadge, type MenuItem } from "./ui";
 
 interface Props {
   title: string;
@@ -331,6 +331,7 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
             {color && <span className={cx("size-2 shrink-0 rounded-full", color)} />}
             <span className={cx("truncate text-[13px] font-medium", c.production && "text-red-600 dark:text-red-400")}>{c.name}</span>
             {c.production && <ProdBadge />}
+            {c.incognito && <IncognitoBadge />}
           </div>
           <div className="truncate font-mono text-[11px] text-muted">{connAddress(c)}</div>
         </div>

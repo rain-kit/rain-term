@@ -15,6 +15,7 @@ interface Form {
   color: string;
   note: string;
   production: boolean;
+  incognito: boolean;
   host: string;
   port: string;
   user: string;
@@ -36,6 +37,7 @@ function toForm(c?: ConnView | null): Form {
     color: c?.color ?? "",
     note: c?.note ?? "",
     production: !!c?.production,
+    incognito: !!c?.incognito,
     host: c?.host ?? "",
     port: String(c?.port ?? DEFAULT_SSH_PORT),
     user: c?.user ?? "",
@@ -80,6 +82,7 @@ function toReq(f: Form, id: string, clear: { password: boolean; keyPassphrase: b
     jumpId: f.jumpId,
     keepaliveSeconds: Number(f.keepaliveSeconds),
     initDir: f.initDir.trim(),
+    incognito: f.incognito,
     clearPassword: clear.password,
     clearKeyPassphrase: clear.keyPassphrase,
   };
@@ -378,6 +381,12 @@ export default function ConnEditor({
           desc={t("editor.productionDesc")}
           checked={f.production}
           onChange={(v) => set("production", v)}
+        />
+        <SwitchRow
+          title={t("editor.incognito")}
+          desc={t("editor.incognitoDesc")}
+          checked={f.incognito}
+          onChange={(v) => set("incognito", v)}
         />
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium text-muted">{t("editor.color")}</span>

@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { VenetianMask, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../lib/i18n";
 import { ContextMenu, cx, type MenuItem } from "./ui";
@@ -13,6 +13,8 @@ export interface TabItem {
   status?: TabStatus;
   /** 生产环境的连接，标签显示红色。 */
   danger?: boolean;
+  /** 无痕模式的连接，标签显示面具图标。 */
+  incognito?: boolean;
 }
 
 const dot: Record<TabStatus, string> = {
@@ -128,11 +130,14 @@ export default function TabBar({
             className={cx(
               "group relative flex h-8 max-w-52 min-w-28 shrink-0 cursor-default items-center gap-1.5 rounded-t-lg border border-b-0 pr-1 pl-2.5 text-[13px] select-none",
               tab.key === active ? "border-line bg-canvas text-ink" : "border-transparent text-muted hover:bg-subtle hover:text-ink",
+              tab.incognito && !tab.danger && "bg-indigo-500/8 !text-indigo-600 dark:bg-indigo-500/15 dark:!text-indigo-400",
               tab.danger && "bg-red-500/8 !text-red-600 dark:bg-red-500/15 dark:!text-red-400",
             )}
           >
+            {tab.incognito && !tab.danger && <span className="absolute inset-x-0 top-0 h-0.5 rounded-t-lg bg-indigo-500" />}
             {tab.danger && <span className="absolute inset-x-0 top-0 h-0.5 rounded-t-lg bg-red-500" />}
             {tab.status && <span className={cx("size-1.5 shrink-0 rounded-full", dot[tab.status])} />}
+            {tab.incognito && <VenetianMask size={13} className="shrink-0 text-indigo-500 dark:text-indigo-400" />}
             {tab.icon}
             <span className="min-w-0 flex-1 truncate">{tab.title}</span>
             <button
