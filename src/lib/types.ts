@@ -207,6 +207,15 @@ export interface Listing {
   entries: FileEntry[];
 }
 
+/** 文本文件的预览内容。 */
+export interface FilePreview {
+  text: string;
+  /** 文件大小。 */
+  size: number;
+  /** 文件太大，text 只是开头部分。 */
+  truncated: boolean;
+}
+
 export interface SftpOpened {
   id: string;
   /** 初始目录。 */

@@ -33,6 +33,8 @@ const BUF_SIZE: usize = 256 * 1024;
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// 关闭面板时等服务器确认关闭 sftp channel 的最长时间。
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+/// 预览最多读取文件开头的这么多字节。
+pub const PREVIEW_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -73,6 +75,17 @@ pub struct Listing {
     pub path: String,
     /// 目录在前，再按名称排序。
     pub entries: Vec<FileEntry>,
+}
+
+/// 文本文件的预览内容。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    pub text: String,
+    /// 文件大小。
+    pub size: u64,
+    /// 文件超过 PREVIEW_LIMIT，text 只是开头部分。
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -374,6 +387,50 @@ impl SftpService {
         Ok(())
     }
 
+    /// 读取文本文件用于预览，最多读开头 PREVIEW_LIMIT 字节；二进制文件返回错误。
+    pub async fn preview(&self, id: &str, path: &str) -> ApiResult<Preview> {
+        let p = self.panel(id)?;
+        let meta = p
+            .sftp
+            .metadata(path)
+            .await
+            .map_err(|e| failed(path, &e))?;
+        if !meta.file_type().is_file() {
+            return Err(error::SFTP_FAILED.msg(on_path(
+                path,
+                msg!("err.sftp.notFile", "不是普通文件"),
+            )));
+        }
+        let mut file = p.sftp.open(path).await.map_err(|e| failed(path, &e))?;
+        let mut buf = Vec::new();
+        let r = (&mut file)
+            .take(PREVIEW_LIMIT as u64 + 1)
+            .read_to_end(&mut buf)
+            .await;
+        let _ = file.close().await;
+        r.map_err(|e| {
+            error::SFTP_FAILED.msg(on_path(
+                path,
+                msg!("err.sftp.read", "读取失败").with_cause(e),
+            ))
+        })?;
+        let truncated = buf.len() > PREVIEW_LIMIT;
+        buf.truncate(PREVIEW_LIMIT);
+        // /proc 下的文件大小报告为 0，但能读出内容。
+        let size = meta.len().max(buf.len() as u64);
+        let text = decode_text(buf, truncated).ok_or_else(|| {
+            error::SFTP_FAILED.msg(on_path(
+                path,
+                msg!("err.sftp.notText", "不是文本文件，无法预览"),
+            ))
+        })?;
+        Ok(Preview {
+            text,
+            size,
+            truncated,
+        })
+    }
+
     /// 把本地文件或目录上传到远程目录 remote_dir，同名文件会被覆盖。
     pub fn upload(
         &self,
@@ -560,6 +617,28 @@ fn local_name(name: &str) -> String {
     } else {
         s
     }
+}
+
+/// 把文件内容按 UTF-8 解成文本，无法解码的字节显示为替换字符；含 NUL 字节时视为二进制文件，返回 None。
+/// truncated 为 true 时去掉末尾被截断的半个字符。
+fn decode_text(mut buf: Vec<u8>, truncated: bool) -> Option<String> {
+    if buf.contains(&0) {
+        return None;
+    }
+    if truncated
+        && let Err(e) = std::str::from_utf8(&buf)
+        && e.error_len().is_none()
+    {
+        buf.truncate(e.valid_up_to());
+    }
+    let s = match String::from_utf8(buf) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    };
+    Some(match s.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_string(),
+        None => s,
+    })
 }
 
 fn kind_of(m: &FileAttributes) -> FileKind {
@@ -981,6 +1060,17 @@ mod tests {
         assert_eq!(perm_string(&m(0o100640)), "-rw-r-----");
         assert_eq!(perm_string(&m(0o120777)), "lrwxrwxrwx");
         assert_eq!(perm_string(&FileAttributes::default()), "");
+    }
+
+    #[test]
+    fn decode_preview_text() {
+        assert_eq!(decode_text(b"a: 1\n".to_vec(), false).as_deref(), Some("a: 1\n"));
+        assert_eq!(decode_text(b"\xef\xbb\xbfbom".to_vec(), false).as_deref(), Some("bom"));
+        assert_eq!(decode_text(b"a\0b".to_vec(), false), None);
+        // “中”的三个字节被截在第二个字节。
+        assert_eq!(decode_text(b"ab\xe4\xb8".to_vec(), true).as_deref(), Some("ab"));
+        assert_eq!(decode_text(b"ab\xe4\xb8".to_vec(), false).as_deref(), Some("ab\u{fffd}"));
+        assert_eq!(decode_text(b"\xff\xfex".to_vec(), true).as_deref(), Some("\u{fffd}\u{fffd}x"));
     }
 
     #[test]

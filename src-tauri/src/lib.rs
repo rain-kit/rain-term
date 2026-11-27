@@ -80,6 +80,7 @@ pub fn run() {
             commands::sftp::sftp_mkdir,
             commands::sftp::sftp_rename,
             commands::sftp::sftp_remove,
+            commands::sftp::sftp_preview,
             commands::sftp::sftp_upload,
             commands::sftp::sftp_download,
             commands::sftp::sftp_cancel,

@@ -5,7 +5,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::app::AppState;
 use crate::error::ApiResult;
 use crate::i18n::pick;
-use crate::service::sftp::{Listing, OpenOptions, Opened, SftpEvent, SftpSink, Transfer};
+use crate::service::sftp::{Listing, OpenOptions, Opened, Preview, SftpEvent, SftpSink, Transfer};
 
 type S<'a> = State<'a, AppState>;
 
@@ -44,6 +44,11 @@ pub async fn sftp_rename(s: S<'_>, id: String, from: String, to: String) -> ApiR
 #[tauri::command]
 pub async fn sftp_remove(s: S<'_>, id: String, paths: Vec<String>) -> ApiResult<()> {
     s.sftp.remove(&id, &paths).await
+}
+
+#[tauri::command]
+pub async fn sftp_preview(s: S<'_>, id: String, path: String) -> ApiResult<Preview> {
+    s.sftp.preview(&id, &path).await
 }
 
 #[tauri::command]

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Copy,
   Download,
+  Eye,
   File,
   FileSymlink,
   Folder,
@@ -27,6 +28,7 @@ import { formatBytes, formatTime } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns, useSettings, useToast } from "../lib/store";
 import type { FileEntry, I18nMsg, SftpEvent, SftpOpenOptions, Transfer } from "../lib/types";
+import SftpPreview, { previewable } from "./SftpPreview";
 import type { TabStatus } from "./TabBar";
 import { Button, Confirm, ContextMenu, cx, Dialog, IconButton, Input, PasswordInput, type MenuItem } from "./ui";
 
@@ -128,6 +130,7 @@ export default function SftpPanel({
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; items: MenuItem[] } | null>(null);
   const [naming, setNaming] = useState<{ entry?: FileEntry; value: string } | null>(null);
   const [deleting, setDeleting] = useState<FileEntry[] | null>(null);
+  const [previewing, setPreviewing] = useState<FileEntry | null>(null);
   const [overwriting, setOverwriting] = useState<{ paths: string[]; dir: string; names: string[] } | null>(null);
   const [dropping, setDropping] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -312,7 +315,11 @@ export default function SftpPanel({
     if (follow && connected && termCwd && termCwd !== cwdRef.current) load(termCwd, false, true);
   }, [follow, connected, termCwd]);
 
-  const open = (e: FileEntry) => (isDir(e) ? load(e.path) : download([e]));
+  const open = (e: FileEntry) => {
+    if (isDir(e)) load(e.path);
+    else if (e.kind !== "other" && previewable(e.name)) setPreviewing(e);
+    else download([e]);
+  };
   const up = () => cwd && cwd !== "/" && load(parentOf(cwd));
 
   /** 目标目录里已有同名的文件或文件夹时先确认；按服务器上的最新内容判断，不用可能过时的列表。 */
@@ -434,6 +441,9 @@ export default function SftpPanel({
 
   const fileMenu = (list: FileEntry[]): MenuItem[] => [
     ...(list.length === 1 && isDir(list[0]) ? [{ label: t("common.open"), icon: <Folder size={14} />, onClick: () => load(list[0].path) }] : []),
+    ...(list.length === 1 && !isDir(list[0]) && list[0].kind !== "other"
+      ? [{ label: t("sftp.preview"), icon: <Eye size={14} />, onClick: () => setPreviewing(list[0]) }]
+      : []),
     { label: t("sftp.download"), icon: <Download size={14} />, onClick: () => download(list) },
     {
       label: t("sftp.rename"),
@@ -633,6 +643,16 @@ export default function SftpPanel({
       )}
 
       <ContextMenu at={menu?.at ?? null} items={menu?.items ?? []} onClose={() => setMenu(null)} />
+
+      <SftpPreview
+        entry={previewing}
+        read={(path) => sftpApi.preview(panel.current ?? "", path)}
+        onDownload={(e) => download([e])}
+        onClose={() => {
+          setPreviewing(null);
+          listEl.current?.focus();
+        }}
+      />
 
       <Dialog
         open={!!naming}

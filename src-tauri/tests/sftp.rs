@@ -17,7 +17,7 @@ use rain_dial::service::hostkey::HostKeyService;
 use rain_dial::service::pool::ClientPool;
 use rain_dial::service::session::{SessionEvent, SessionService};
 use rain_dial::service::sftp::{
-    Direction, FileKind, OpenOptions, SftpEvent, SftpService, Transfer,
+    Direction, FileKind, OpenOptions, PREVIEW_LIMIT, SftpEvent, SftpService, Transfer,
 };
 use rain_dial::store::ConnStore;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
@@ -285,6 +285,35 @@ async fn browse_and_manage_files() {
     f.sftp.close(&p.id);
     let err = f.sftp.list(&p.id, HOME).await.unwrap_err();
     assert_eq!(err.code, error::SFTP_NOT_FOUND.0);
+}
+
+#[tokio::test]
+async fn preview_text_files() {
+    let srv = TestServer::start().await;
+    let f = fixture(&srv);
+    let id = f.add_conn(&srv, "");
+    write(&srv.remote_file(&format!("{HOME}/a.yaml")), "name: 中文\n".as_bytes());
+    write(&srv.remote_file(&format!("{HOME}/bin")), b"\x7fELF\0\0");
+    let big = vec![b'x'; PREVIEW_LIMIT + 10];
+    write(&srv.remote_file(&format!("{HOME}/big.log")), &big);
+    std::fs::create_dir_all(srv.remote_file(&format!("{HOME}/dir"))).unwrap();
+    let p = f.open(&id).await;
+
+    let v = f.sftp.preview(&p.id, "/home/tester/a.yaml").await.unwrap();
+    assert_eq!((v.text.as_str(), v.size, v.truncated), ("name: 中文\n", 13, false));
+
+    let v = f.sftp.preview(&p.id, "/home/tester/big.log").await.unwrap();
+    assert_eq!((v.text.len(), v.size, v.truncated), (PREVIEW_LIMIT, big.len() as u64, true));
+
+    for (path, want) in [
+        ("/home/tester/bin", "不是文本文件"),
+        ("/home/tester/dir", "不是普通文件"),
+        ("/home/tester/nope", "文件或目录不存在"),
+    ] {
+        let err = f.sftp.preview(&p.id, path).await.unwrap_err();
+        assert_eq!(err.code, error::SFTP_FAILED.0);
+        assert!(err.msg.text().contains(want), "{path}: {}", err.msg.text());
+    }
 }
 
 #[tokio::test]

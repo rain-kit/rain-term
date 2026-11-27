@@ -4,6 +4,7 @@ import { tm } from "./i18n";
 import type {
   ConnView,
   ExportResult,
+  FilePreview,
   HostKeyPrompt,
   I18nMsg,
   LogEntry,
@@ -124,6 +125,8 @@ export const sftpApi = {
   rename: (id: string, from: string, to: string) => invoke<void>("sftp_rename", { id, from, to }),
   /** 目录连同其中的内容一起删除。 */
   remove: (id: string, paths: string[]) => invoke<void>("sftp_remove", { id, paths }),
+  /** 读取文本文件的开头部分，二进制文件报错。 */
+  preview: (id: string, path: string) => invoke<FilePreview>("sftp_preview", { id, path }),
   /** 加入传输队列，同名文件会被覆盖。 */
   upload: (id: string, localPaths: string[], remoteDir: string) => invoke<Transfer[]>("sftp_upload", { id, localPaths, remoteDir }),
   download: (id: string, remotePaths: string[], localDir: string) =>
