@@ -430,7 +430,7 @@ function MenuItems({ items, onPick }: { items: MenuItem[]; onPick: () => void })
           it.onClick();
         }}
         className={cx(
-          "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] disabled:opacity-40",
+          "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] disabled:opacity-40 disabled:hover:bg-transparent",
           it.danger ? "text-red-600 hover:bg-red-500/10 dark:text-red-400" : "hover:bg-subtle",
         )}
       >

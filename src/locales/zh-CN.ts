@@ -215,8 +215,6 @@ const zhCN = {
   "settings.cursorStyle.underline": "下划线",
   "settings.scrollback": "回滚行数",
   "settings.scrollbackDesc": "每个终端最多保留的历史输出行数，修改后对已打开的终端也生效",
-  "settings.copyOnSelect": "选中即复制",
-  "settings.copyOnSelectDesc": "在终端里选中文字后自动复制到剪贴板",
   "tools.title": "工具",
   "tools.enhance": "增强",
   "tools.clickMovesCursor": "点击光标定位",

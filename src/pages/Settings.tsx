@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import LogViewer from "../components/LogViewer";
 import PageHeader from "../components/PageHeader";
 import UpdateRouteMenu from "../components/UpdateRouteMenu";
-import { Button, Card, Input, Segmented, Select, Switch } from "../components/ui";
+import { Button, Card, Input, Segmented, Select } from "../components/ui";
 import { settingsApi } from "../lib/api";
 import { useI18n, type Language } from "../lib/i18n";
 import { useSettings, useToast, useUpdate } from "../lib/store";
@@ -155,9 +155,6 @@ export default function Settings({ onBack }: { onBack: () => void }) {
                 onChange={(v) => updateTerm({ scrollback: Number(v) })}
                 options={scrollbacks.map((n) => ({ value: String(n), label: n.toLocaleString() }))}
               />
-            </Row>
-            <Row title={t("settings.copyOnSelect")} desc={t("settings.copyOnSelectDesc")}>
-              <Switch label={t("settings.copyOnSelect")} checked={term.copyOnSelect} onChange={(copyOnSelect) => updateTerm({ copyOnSelect })} />
             </Row>
           </Group>
 

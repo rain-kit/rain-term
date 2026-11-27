@@ -54,8 +54,6 @@ pub struct TerminalConfig {
     pub font_size: u32,
     /// 回滚保留的行数
     pub scrollback: u32,
-    /// 选中文字后自动复制
-    pub copy_on_select: bool,
     /// 配色方案，取值见 COLOR_SCHEMES；auto 表示跟随界面明暗
     pub color_scheme: String,
     /// 光标样式 block/bar/underline
@@ -68,7 +66,6 @@ impl Default for TerminalConfig {
             font_family: String::new(),
             font_size: 14,
             scrollback: 10_000,
-            copy_on_select: false,
             color_scheme: "auto".into(),
             cursor_style: "block".into(),
         }

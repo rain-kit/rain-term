@@ -223,8 +223,6 @@ const en: Messages = {
   "settings.cursorStyle.underline": "Underline",
   "settings.scrollback": "Scrollback",
   "settings.scrollbackDesc": "Lines of output kept in each terminal. Also applies to terminals that are already open.",
-  "settings.copyOnSelect": "Copy on select",
-  "settings.copyOnSelectDesc": "Copy text to the clipboard as soon as you select it in a terminal",
   "tools.title": "Tools",
   "tools.enhance": "Enhancements",
   "tools.clickMovesCursor": "Click to place cursor",

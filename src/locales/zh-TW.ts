@@ -217,8 +217,6 @@ const zhTW: Messages = {
   "settings.cursorStyle.underline": "底線",
   "settings.scrollback": "回捲行數",
   "settings.scrollbackDesc": "每個終端機最多保留的歷史輸出行數，修改後對已開啟的終端機也生效",
-  "settings.copyOnSelect": "選取即複製",
-  "settings.copyOnSelectDesc": "在終端機裡選取文字後自動複製到剪貼簿",
   "tools.title": "工具",
   "tools.enhance": "增強",
   "tools.clickMovesCursor": "點擊游標定位",

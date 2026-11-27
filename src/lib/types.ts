@@ -20,7 +20,6 @@ export interface TerminalSettings {
   fontFamily: string;
   fontSize: number;
   scrollback: number;
-  copyOnSelect: boolean;
   colorScheme: ColorScheme;
   cursorStyle: CursorStyle;
 }

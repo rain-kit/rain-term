@@ -6,7 +6,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ArrowDown, ArrowUp, CaseSensitive, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CaseSensitive, ClipboardPaste, Copy, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { errorMessage, sessionApi, settingsApi } from "../lib/api";
 import { clickMovesCursor } from "../lib/clickMove";
@@ -15,7 +15,7 @@ import { useSettings, useToast } from "../lib/store";
 import { isLightScheme, terminalTheme } from "../lib/terminalThemes";
 import type { SessionClosed, TerminalSettings } from "../lib/types";
 import { ConnStatus } from "./StatusBar";
-import { Confirm, cx, IconButton } from "./ui";
+import { Confirm, ContextMenu, cx, IconButton } from "./ui";
 
 export type TermStatus = "connecting" | "connected" | "closed";
 
@@ -125,8 +125,6 @@ export default function TerminalView({
   /** 每次连接加一，旧连接迟到的消息据此丢弃。 */
   const gen = useRef(0);
   const input = useRef<{ queue: (string | Uint8Array)[]; busy: boolean }>({ queue: [], busy: false });
-  const copyOnSelect = useRef(false);
-  copyOnSelect.current = settings?.terminal.copyOnSelect ?? false;
   const clickMoves = useRef(false);
   clickMoves.current = settings?.tools.enhance.clickMovesCursor ?? false;
   const productionRef = useRef(production);
@@ -137,6 +135,7 @@ export default function TerminalView({
   const [status, setStatus] = useState<{ s: TermStatus; message?: string }>({ s: "connecting" });
   const [pasting, setPasting] = useState<string | null>(null);
   const [finding, setFinding] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number; selected: boolean } | null>(null);
 
   useEffect(() => onStatusRef.current(status.s), [status.s]);
 
@@ -268,9 +267,6 @@ export default function TerminalView({
       send(d);
     });
     xt.onBinary((d) => send(Uint8Array.from(d, (c) => c.charCodeAt(0))));
-    xt.onSelectionChange(() => {
-      if (copyOnSelect.current && xt.hasSelection()) writeText(xt.getSelection()).catch(() => {});
-    });
     xt.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
       const ctrlShift = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
@@ -366,12 +362,29 @@ export default function TerminalView({
           e.preventDefault();
           e.stopPropagation();
           const xt = term.current;
-          // 程序自己处理鼠标时（vim 的 set mouse=a、tmux 等）右键已经发给了程序；按住 Shift 仍然粘贴。
-          if (xt && xt.modes.mouseTrackingMode !== "none" && !e.shiftKey) return;
-          if (xt?.hasSelection() && !copyOnSelect.current) {
-            copy();
-            xt.clearSelection();
-          } else pasteClipboard();
+          // 程序自己处理鼠标时（vim 的 set mouse=a、tmux 等）右键已经发给了程序；按住 Shift 仍然弹出菜单。
+          if (!xt || (xt.modes.mouseTrackingMode !== "none" && !e.shiftKey)) return;
+          setMenu({ x: e.clientX, y: e.clientY, selected: xt.hasSelection() });
+        }}
+      />
+
+      <ContextMenu
+        at={menu}
+        items={[
+          {
+            label: t("terminal.copy"),
+            icon: <Copy size={14} />,
+            disabled: !menu?.selected,
+            onClick: () => {
+              copy();
+              term.current?.clearSelection();
+            },
+          },
+          { label: t("terminal.paste"), icon: <ClipboardPaste size={14} />, onClick: pasteClipboard },
+        ]}
+        onClose={() => {
+          setMenu(null);
+          term.current?.focus();
         }}
       />
 
