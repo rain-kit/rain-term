@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// Tauri 开发模式固定使用 1430 端口（Rain Tunnel 用 1420，两者可同时开发），见 src-tauri/tauri.conf.json 的 devUrl。
+// Tauri 开发模式固定使用 1430 端口，见 src-tauri/tauri.conf.json 的 devUrl。
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
