@@ -47,7 +47,7 @@ pub struct SshParams {
     /// 登录后进入的目录，为空时使用服务器默认目录。
     #[serde(skip_serializing_if = "String::is_empty")]
     pub init_dir: String,
-    /// 无痕模式：禁止本次会话把命令写入历史文件，并定期清除服务器上的历史。
+    /// 无痕模式：禁止本次会话把命令写入历史文件。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub incognito: bool,
     #[serde(skip_serializing_if = "String::is_empty")]

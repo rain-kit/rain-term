@@ -29,12 +29,8 @@ pub const MAX_UNACKED: usize = 1024 * 1024;
 const REASON_GRACE: Duration = Duration::from_millis(500);
 /// 关闭会话时给服务器发 EOF / close 的最长等待时间。
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
-/// 无痕模式：清除历史命令的间隔。
-const INCOGNITO_INTERVAL: Duration = Duration::from_secs(3);
 /// 无痕模式：登录后禁止本次会话把命令写进历史文件。
 const INCOGNITO_SETUP: &str = "unset HISTFILE\r";
-/// 无痕模式：定期删除常见 shell 的历史文件。
-const INCOGNITO_CLEAR: &str = "rm -f ~/.bash_history ~/.zsh_history ~/.sh_history 2>/dev/null; true";
 
 /// 会话结束：shell 退出或连接断开。用户主动关闭时不发。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -140,10 +136,6 @@ impl SessionService {
             },
         );
         info!(conn = %conn.name, session = %id, "终端会话已打开");
-
-        if incognito {
-            tokio::spawn(clear_history(client.clone(), cancel.clone()));
-        }
 
         let svc = self.clone();
         let (sid, name) = (id.clone(), conn.name.clone());
@@ -254,23 +246,6 @@ async fn start_shell(
         return Err(e);
     }
     Ok((w, r))
-}
-
-/// 无痕模式：每隔几秒在单独的 channel 上清除服务器的命令历史，直到会话关闭或连接断开。
-async fn clear_history(client: Arc<Client>, cancel: CancellationToken) {
-    let mut ticker = tokio::time::interval(INCOGNITO_INTERVAL);
-    loop {
-        tokio::select! {
-            _ = cancel.cancelled() => return,
-            _ = client.dead.cancelled() => return,
-            _ = ticker.tick() => {
-                if let Err(e) = client.ssh.exec(INCOGNITO_CLEAR).await {
-                    tracing::debug!(err = %e, "无痕清除历史失败");
-                    return;
-                }
-            }
-        }
-    }
 }
 
 /// 进入登录后初始目录的命令。开头的 ~/ 不加引号，shell 才会把它展开成主目录。

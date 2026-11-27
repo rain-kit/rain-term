@@ -397,18 +397,6 @@ impl SshClient {
             || self.via.as_ref().is_some_and(|v| v.is_closed())
     }
 
-    /// 在一条一次性 channel 上执行命令，丢弃输出，等命令结束。用于无痕模式清理历史。
-    pub async fn exec(&self, command: &str) -> Result<(), SshError> {
-        let mut channel = self.handle.channel_open_session().await?;
-        channel.exec(false, command.as_bytes()).await?;
-        while let Some(msg) = channel.wait().await {
-            if matches!(msg, russh::ChannelMsg::Close) {
-                break;
-            }
-        }
-        Ok(())
-    }
-
     /// 在一条一次性 channel 上执行命令，把 input 写到它的标准输入，等命令结束后返回标准输出。
     /// 输出超过 limit 字节的部分丢弃；标准错误丢弃。
     pub async fn exec_output(
