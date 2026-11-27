@@ -129,11 +129,12 @@ export const workspaceApi = {
 
 export const updateApi = {
   status: () => invoke<UpdateInfo>("update_status"),
-  check: () => invoke<UpdateInfo>("update_check"),
+  /** via 为跳板机的连接 ID 时经它访问 GitHub，为空时直接访问。 */
+  check: (via?: string) => invoke<UpdateInfo>("update_check", { via: via ?? null }),
   /** 托盘是否请求打开更新窗口，取出后清除。 */
   takeOpenRequest: () => invoke<boolean>("update_take_open_request"),
-  /** 下载并安装，成功后程序会重启，不会正常返回。 */
-  install: () => invoke<void>("update_install"),
+  /** 下载并安装，成功后程序会重启，不会正常返回。via 同 check。 */
+  install: (via?: string) => invoke<void>("update_install", { via: via ?? null }),
   openReleasePage: () => invoke<void>("open_release_page"),
 };
 

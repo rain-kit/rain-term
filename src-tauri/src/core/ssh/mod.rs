@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod jump;
 pub mod known_hosts;
+pub mod proxy;
 pub mod sftp;
 pub mod shell;
 

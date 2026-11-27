@@ -256,6 +256,12 @@ const zhCN = {
   "update.found": "发现新版本 v{version}",
   "update.upToDate": "已是最新版本",
   "update.lastChecked": "上次检查：{time}",
+  "update.direct": "直接访问",
+  "update.viaJump": "经跳板机 {name}",
+  "update.pickJump": "选择跳板机…",
+  "update.pickJumpTitle": "选择跳板机",
+  "update.pickJumpHint": "经所选服务器访问 GitHub 检查和下载更新，这台服务器需要能访问外网。",
+  "update.lastJump": "最近选择",
 
   // 后端返回的国际化 key，见 src-tauri/src/error.rs 和 msg! 宏的调用处。
   "err.withCause": "{message}：{cause}",
@@ -270,6 +276,8 @@ const zhCN = {
   "err.updateCheckFailed": "检查更新失败",
   "err.updateInstallFailed": "更新失败",
   "err.updateNotAvailable": "没有可直接安装的新版本，请前往下载页更新",
+  "err.updateJumpFailed": "经跳板机访问 GitHub 失败",
+  "err.update.jumpConnectFailed": "无法连接跳板机 {name}：{reason}",
   "err.config.logLevelInvalid": "日志级别无效：{value}",
   "err.config.themeInvalid": "主题无效：{value}",
   "err.config.languageInvalid": "语言无效：{value}",

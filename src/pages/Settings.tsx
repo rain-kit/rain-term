@@ -2,6 +2,7 @@ import { ArrowLeft, ArrowUpCircle, FolderOpen, Monitor, Moon, RefreshCw, ScrollT
 import { useEffect, useState, type ReactNode } from "react";
 import LogViewer from "../components/LogViewer";
 import PageHeader from "../components/PageHeader";
+import UpdateRouteMenu from "../components/UpdateRouteMenu";
 import { Button, Card, Input, Segmented, Select, Switch } from "../components/ui";
 import { settingsApi } from "../lib/api";
 import { useI18n, type Language } from "../lib/i18n";
@@ -202,15 +203,19 @@ export default function Settings({ onBack }: { onBack: () => void }) {
                   v{s.version}
                   {newVersion && <span className="absolute -top-1 -right-2 size-2 rounded-full bg-red-500" />}
                 </span>
-                <Button
-                  size="sm"
-                  icon={<RefreshCw size={13} className={checking ? "animate-spin" : undefined} />}
-                  disabled={checking}
-                  onClick={check}
-                  title={updateInfo?.checkedAt && t("update.lastChecked", { time: new Date(updateInfo.checkedAt).toLocaleString() })}
-                >
-                  {t(checking ? "update.checking" : "update.check")}
-                </Button>
+                <UpdateRouteMenu onPick={check}>
+                  {(open) => (
+                    <Button
+                      size="sm"
+                      icon={<RefreshCw size={13} className={checking ? "animate-spin" : undefined} />}
+                      disabled={checking}
+                      onClick={open}
+                      title={updateInfo?.checkedAt && t("update.lastChecked", { time: new Date(updateInfo.checkedAt).toLocaleString() })}
+                    >
+                      {t(checking ? "update.checking" : "update.check")}
+                    </Button>
+                  )}
+                </UpdateRouteMenu>
                 {newVersion && (
                   <Button size="sm" variant="primary" icon={<ArrowUpCircle size={13} />} onClick={() => setDialogOpen(true)}>
                     {t("update.update")}

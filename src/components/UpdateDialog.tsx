@@ -3,6 +3,7 @@ import { updateApi } from "../lib/api";
 import { useI18n } from "../lib/i18n";
 import { useToast, useUpdate } from "../lib/store";
 import Markdown from "./Markdown";
+import UpdateRouteMenu from "./UpdateRouteMenu";
 import { Button, Dialog } from "./ui";
 
 /** 更新窗口：新版本的更新内容，可直接更新或前往下载页。 */
@@ -30,14 +31,18 @@ export default function UpdateDialog() {
             {t("update.download")}
           </Button>
           {info.canInstall && (
-            <Button
-              variant="primary"
-              icon={installing ? <LoaderCircle size={14} className="animate-spin" /> : <Download size={14} />}
-              disabled={installing}
-              onClick={install}
-            >
-              {installing ? (percent !== null ? t("update.downloading", { percent }) : t("update.installing")) : t("update.install")}
-            </Button>
+            <UpdateRouteMenu onPick={install}>
+              {(open) => (
+                <Button
+                  variant="primary"
+                  icon={installing ? <LoaderCircle size={14} className="animate-spin" /> : <Download size={14} />}
+                  disabled={installing}
+                  onClick={open}
+                >
+                  {installing ? (percent !== null ? t("update.downloading", { percent }) : t("update.installing")) : t("update.install")}
+                </Button>
+              )}
+            </UpdateRouteMenu>
           )}
         </>
       }

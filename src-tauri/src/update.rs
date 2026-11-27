@@ -1,11 +1,12 @@
 //! 版本检测与更新：后台每 6 小时查询 GitHub 上最新的正式版（不含预发布），用户点击更新时下载并安装。
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
 use chrono::{DateTime, Local, Utc};
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
@@ -13,7 +14,10 @@ use tauri_plugin_updater::UpdaterExt;
 use tracing::{info, warn};
 
 use crate::app::AppState;
+use crate::core::ssh::proxy::Socks5Proxy;
 use crate::error::{self, ApiError, ApiResult};
+use crate::model::ConnParams;
+use crate::service::pool::{Client, ClientPool};
 use crate::{events, tray, window};
 
 pub const RELEASES_URL: &str = "https://github.com/rain-kit/rain-term/releases/latest";
@@ -82,12 +86,16 @@ impl Updater {
         self.open_requested.swap(false, Ordering::SeqCst)
     }
 
-    async fn fetch_latest(&self) -> Result<Release, reqwest::Error> {
+    async fn fetch_latest(&self, proxy: Option<&Url>) -> Result<Release, reqwest::Error> {
         let current = self.info.lock().unwrap().current.clone();
-        reqwest::Client::builder()
+        let mut client = reqwest::Client::builder()
             // GitHub API 要求带 User-Agent。
             .user_agent(format!("rain-dial/{current}"))
-            .timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(15));
+        if let Some(p) = proxy {
+            client = client.proxy(reqwest::Proxy::all(p.as_str())?);
+        }
+        client
             .build()?
             .get(LATEST_API)
             .header(reqwest::header::ACCEPT, "application/vnd.github+json")
@@ -98,9 +106,9 @@ impl Updater {
             .await
     }
 
-    async fn check(&self) -> ApiResult<UpdateInfo> {
+    async fn check(&self, proxy: Option<&Url>) -> ApiResult<UpdateInfo> {
         let rel = self
-            .fetch_latest()
+            .fetch_latest(proxy)
             .await
             .map_err(|e| error::UPDATE_CHECK_FAILED.cause(e))?;
         let latest = rel.tag_name.trim_start_matches('v').to_string();
@@ -136,23 +144,132 @@ fn pubkey(app: &AppHandle) -> String {
         .to_string()
 }
 
+/// 检查、更新时访问 GitHub 的方式：直接访问，或经跳板机。
+/// 经跳板机时借用连接池里的 SSH 连接（终端开着时直接复用），在本机起一个经它转发的 SOCKS5 代理，用完释放。
+pub struct Route {
+    jump: Option<Jump>,
+}
+
+struct Jump {
+    name: String,
+    pool: Arc<ClientPool>,
+    client: Arc<Client>,
+    proxy: Socks5Proxy,
+    url: Url,
+}
+
+impl Drop for Jump {
+    fn drop(&mut self) {
+        self.pool.release(&self.client);
+    }
+}
+
+impl Route {
+    pub fn direct() -> Self {
+        Route { jump: None }
+    }
+
+    /// via 为连接 ID 时经这台跳板机访问，为空时直接访问。连不上跳板机时返回说明原因的错误。
+    pub async fn open(app: &AppHandle, via: Option<&str>) -> ApiResult<Route> {
+        let Some(id) = via.filter(|id| !id.is_empty()) else {
+            return Ok(Route::direct());
+        };
+        let st = app.state::<AppState>();
+        let conn = st.conns.resolve(id)?;
+        let ConnParams::Ssh(p) = &conn.params;
+        let name = conn.name.clone();
+        let (client, _) = st.pool.acquire(&conn, p).await.map_err(|e| {
+            let reason = e.msg;
+            error::UPDATE_JUMP_FAILED.msg(msg!(
+                "err.update.jumpConnectFailed",
+                "无法连接跳板机 {name}: {reason}",
+                name,
+                reason
+            ))
+        })?;
+        let started = client
+            .ssh
+            .socks5_proxy(&name)
+            .await
+            .map_err(|e| error::UPDATE_JUMP_FAILED.cause(e))
+            .and_then(|proxy| {
+                let url =
+                    Url::parse(&proxy.url()).map_err(|e| error::UPDATE_JUMP_FAILED.cause(e))?;
+                Ok((proxy, url))
+            });
+        let (proxy, url) = match started {
+            Ok(v) => v,
+            Err(e) => {
+                st.pool.release(&client);
+                return Err(e);
+            }
+        };
+        info!(jump = %name, "经跳板机访问 GitHub");
+        Ok(Route {
+            jump: Some(Jump {
+                name,
+                pool: st.pool.clone(),
+                client,
+                proxy,
+                url,
+            }),
+        })
+    }
+
+    fn proxy(&self) -> Option<Url> {
+        self.jump.as_ref().map(|j| j.url.clone())
+    }
+
+    /// 经跳板机失败时，跳板机已断开或连不上 GitHub 的话换成说明跳板机原因的错误。
+    pub fn explain(&self, e: ApiError) -> ApiError {
+        let Some(j) = &self.jump else { return e };
+        if !j.client.alive() {
+            let name = &j.name;
+            let reason = j
+                .client
+                .reason()
+                .unwrap_or_else(|| msg!("err.ssh.connectionLost", "连接断开"));
+            return error::UPDATE_JUMP_FAILED.msg(msg!(
+                "err.ssh.jumpDisconnected",
+                "跳板机 {name} 已断开: {reason}",
+                name,
+                reason
+            ));
+        }
+        match j.proxy.last_error() {
+            Some(m) => error::UPDATE_JUMP_FAILED.msg(m),
+            None => e,
+        }
+    }
+}
+
 /// 下载安装包可能很久，只给检查设置超时。
 fn updater(
     app: &AppHandle,
+    proxy: Option<Url>,
     timeout: Option<Duration>,
 ) -> tauri_plugin_updater::Result<tauri_plugin_updater::Updater> {
     let mut b = app.updater_builder();
     if let Some(t) = timeout {
         b = b.timeout(t);
     }
+    if let Some(p) = proxy {
+        b = b.proxy(p);
+    }
     b.build()
 }
 
 /// 不下载安装包，先用 latest.json 预检能否直接更新。完整验签要等下载完才能做，失败时由 install 关掉直接更新。
 /// 连不上时返回 None，不当作签名错误，保留之前的判断。
-async fn precheck(app: &AppHandle, latest: &str) -> Option<bool> {
+async fn precheck(app: &AppHandle, latest: &str, proxy: Option<Url>) -> Option<bool> {
     use tauri_plugin_updater::Error::{Network, Reqwest};
-    let reason = match async { updater(app, Some(Duration::from_secs(15)))?.check().await }.await {
+    let reason = match async {
+        updater(app, proxy, Some(Duration::from_secs(15)))?
+            .check()
+            .await
+    }
+    .await
+    {
         Err(e @ (Reqwest(_) | Network(_))) => {
             warn!(latest, err = %e, "获取 latest.json 失败，暂不判断能否直接更新");
             return None;
@@ -245,13 +362,15 @@ pub fn request_open(app: &AppHandle) {
 }
 
 /// 检查一次，把结果推送给界面并刷新托盘菜单。
-pub async fn check_now(app: &AppHandle) -> Result<UpdateInfo, ApiError> {
+pub async fn check_now(app: &AppHandle, route: &Route) -> Result<UpdateInfo, ApiError> {
     let st = app.state::<AppState>();
     let before = st.updater.info().latest;
-    match st.updater.check().await {
+    let proxy = route.proxy();
+    match st.updater.check(proxy.as_ref()).await {
         Ok(mut info) => {
             if info.has_update
-                && let Some(can) = precheck(app, info.latest.as_deref().unwrap_or_default()).await
+                && let Some(can) =
+                    precheck(app, info.latest.as_deref().unwrap_or_default(), proxy).await
             {
                 info = st.updater.set_can_install(can);
             }
@@ -263,6 +382,7 @@ pub async fn check_now(app: &AppHandle) -> Result<UpdateInfo, ApiError> {
             Ok(info)
         }
         Err(e) => {
+            let e = route.explain(e);
             warn!(err = %e, "检查更新失败");
             Err(e)
         }
@@ -271,13 +391,13 @@ pub async fn check_now(app: &AppHandle) -> Result<UpdateInfo, ApiError> {
 
 /// 下载并安装新版本（安装包来自 release 中的 latest.json，经 tauri.conf.json 里的公钥验签）。
 /// Windows 由安装程序退出并重新启动应用，其他系统安装后重启；程序退出时所有终端和 SFTP 随之断开。
-pub async fn install(app: &AppHandle) -> ApiResult<()> {
+pub async fn install(app: &AppHandle, route: &Route) -> ApiResult<()> {
     let fail = |e: tauri_plugin_updater::Error| error::UPDATE_INSTALL_FAILED.cause(e);
-    let update = updater(app, None)
+    let update = updater(app, route.proxy(), None)
         .map_err(fail)?
         .check()
         .await
-        .map_err(fail)?;
+        .map_err(|e| route.explain(fail(e)))?;
     let Some(update) =
         update.filter(|u| check_signature(&u.signature, &pubkey(app), &u.version).is_ok())
     else {
@@ -308,8 +428,9 @@ pub async fn install(app: &AppHandle) -> ApiResult<()> {
                     .lock()
                     .unwrap() = Some(update.signature.clone());
                 disable_install(app);
+                return fail(e);
             }
-            fail(e)
+            route.explain(fail(e))
         })?;
 
     info!(version = %update.version, "安装更新");
@@ -321,7 +442,7 @@ pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_DELAY).await;
         loop {
-            let _ = check_now(&app).await;
+            let _ = check_now(&app, &Route::direct()).await;
             tokio::time::sleep(INTERVAL).await;
         }
     });

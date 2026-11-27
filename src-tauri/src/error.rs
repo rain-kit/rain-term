@@ -93,6 +93,8 @@ pub const UPDATE_NOT_AVAILABLE: Code = Code(
     "err.updateNotAvailable",
     "没有可直接安装的新版本，请前往下载页更新",
 );
+pub const UPDATE_JUMP_FAILED: Code =
+    Code(200006, "err.updateJumpFailed", "经跳板机访问 GitHub 失败");
 
 // -------------------- SSH 300000 -------------------- //
 pub const SSH_CONNECT_FAILED: Code = Code(300001, "err.sshConnectFailed", "SSH 连接失败");

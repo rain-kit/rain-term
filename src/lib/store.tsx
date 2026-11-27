@@ -215,25 +215,42 @@ function merge(cur: HostKeyPrompt[], add: HostKeyPrompt[]) {
 interface UpdateCtx {
   info: UpdateInfo | null;
   checking: boolean;
-  /** 主动检查，结果用提示告知。 */
-  check: () => Promise<void>;
+  /** 主动检查，结果用提示告知。via 为跳板机的连接 ID 时经它访问，为空时直接访问。 */
+  check: (via?: string) => Promise<void>;
   installing: boolean;
   /** 下载进度百分比，大小未知时为 null。 */
   progress: number | null;
-  install: () => Promise<void>;
+  install: (via?: string) => Promise<void>;
   /** 更新窗口（新版本的更新内容和更新按钮） */
   dialogOpen: boolean;
   setDialogOpen: (open: boolean) => void;
+  /** 最近一次经跳板机检查或更新时选的连接 ID，没选过时为空。 */
+  lastJump: string | null;
 }
 
 const UpdateContext = createContext<UpdateCtx>(null!);
 export const useUpdate = () => useContext(UpdateContext);
+
+const LAST_JUMP_KEY = "update.lastJump";
 
 function UpdateProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [checking, setChecking] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [lastJump, setLastJump] = useState(() => localStorage.getItem(LAST_JUMP_KEY));
+  const remember = useCallback((via?: string) => {
+    if (!via) return;
+    localStorage.setItem(LAST_JUMP_KEY, via);
+    setLastJump(via);
+  }, []);
+  // 选过的服务器被删除后不再记住它。
+  const { conns, loaded } = useConns();
+  useEffect(() => {
+    if (!loaded || !lastJump || conns.some((c) => c.id === lastJump)) return;
+    localStorage.removeItem(LAST_JUMP_KEY);
+    setLastJump(null);
+  }, [conns, loaded, lastJump]);
   const seen = useRef<string | undefined>(undefined);
   const manual = useRef(false);
 
@@ -264,11 +281,12 @@ function UpdateProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const check = useCallback(async () => {
+  const check = useCallback(async (via?: string) => {
+    remember(via);
     manual.current = true;
     setChecking(true);
     try {
-      const u = await updateApi.check();
+      const u = await updateApi.check(via);
       setInfo(u);
       if (u.hasUpdate) setDialogOpen(true);
       else toast.success(t("update.upToDate"));
@@ -284,11 +302,12 @@ function UpdateProvider({ children }: { children: ReactNode }) {
   const [progress, setProgress] = useState<number | null>(null);
   useEffect(() => events.onUpdateProgress((p) => setProgress(p.total ? Math.floor((p.downloaded / p.total) * 100) : null)), []);
 
-  const install = useCallback(async () => {
+  const install = useCallback(async (via?: string) => {
+    remember(via);
     setInstalling(true);
     setProgress(0);
     try {
-      await updateApi.install();
+      await updateApi.install(via);
     } catch (e) {
       toast.error(e);
     } finally {
@@ -298,8 +317,8 @@ function UpdateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ info, checking, check, installing, progress, install, dialogOpen, setDialogOpen }),
-    [info, checking, check, installing, progress, install, dialogOpen],
+    () => ({ info, checking, check, installing, progress, install, dialogOpen, setDialogOpen, lastJump }),
+    [info, checking, check, installing, progress, install, dialogOpen, lastJump],
   );
   return <UpdateContext.Provider value={value}>{children}</UpdateContext.Provider>;
 }
@@ -308,11 +327,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return (
     <ToastProvider>
       <SettingsProvider>
-        <UpdateProvider>
-          <ConnsProvider>
+        <ConnsProvider>
+          <UpdateProvider>
             <HostKeyProvider>{children}</HostKeyProvider>
-          </ConnsProvider>
-        </UpdateProvider>
+          </UpdateProvider>
+        </ConnsProvider>
       </SettingsProvider>
     </ToastProvider>
   );
