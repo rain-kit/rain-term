@@ -49,6 +49,67 @@ function useCollapsed(key: string) {
   return [collapsed, toggle] as const;
 }
 
+const WIDTH_KEY = "connList.width";
+/** 列表宽度占整体的比例。 */
+const DEFAULT_WIDTH = 0.25;
+const MIN_WIDTH = 0.05;
+const MAX_WIDTH = 0.6;
+
+const clampWidth = (v: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, v));
+
+function useWidth() {
+  const [width, setWidth] = useState(() => {
+    const v = Number(localStorage.getItem(WIDTH_KEY));
+    return v > 0 ? clampWidth(v) : DEFAULT_WIDTH;
+  });
+  const commit = (v: number) => {
+    setWidth(v);
+    localStorage.setItem(WIDTH_KEY, String(v));
+  };
+  return [width, setWidth, commit] as const;
+}
+
+/** 列表右边缘的拖动条：按住拖动调整宽度，双击恢复默认。 */
+function ResizeHandle({ width, onChange, onCommit }: { width: number; onChange: (v: number) => void; onCommit: (v: number) => void }) {
+  const { t } = useI18n();
+  const [active, setActive] = useState(false);
+  const last = useRef(width);
+  const ratio = (el: HTMLElement, x: number) => {
+    const box = el.parentElement?.parentElement?.getBoundingClientRect();
+    return box?.width ? clampWidth((x - box.left) / box.width) : width;
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      title={t("conn.resizeHint")}
+      className={cx(
+        "absolute inset-y-0 -right-0.75 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-accent/40",
+        active && "bg-accent/60",
+      )}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        last.current = width;
+        setActive(true);
+      }}
+      onPointerMove={(e) => {
+        if (!active) return;
+        last.current = ratio(e.currentTarget, e.clientX);
+        onChange(last.current);
+      }}
+      onPointerUp={() => {
+        if (!active) return;
+        setActive(false);
+        onCommit(last.current);
+      }}
+      onLostPointerCapture={() => setActive(false)}
+      onDoubleClick={() => onCommit(DEFAULT_WIDTH)}
+    />
+  );
+}
+
 /** 左侧的连接列表：按分组显示，搜索，拖动排序，右键菜单。 */
 export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props) {
   const { t, tx } = useI18n();
@@ -67,6 +128,7 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
   const [groupName, setGroupName] = useState("");
   const [groupError, setGroupError] = useState("");
   const [otherOpen, setOtherOpen] = useState(false);
+  const [width, setWidth, commitWidth] = useWidth();
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -282,7 +344,11 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
   };
 
   return (
-    <aside className={cx("flex w-1/4 shrink-0 flex-col border-r border-line bg-surface/60", drag && "cursor-grabbing")}>
+    <aside
+      className={cx("relative flex min-w-0 shrink-0 flex-col border-r border-line bg-surface/60", drag && "cursor-grabbing")}
+      style={{ width: `${width * 100}%` }}
+    >
+      <ResizeHandle width={width} onChange={setWidth} onCommit={commitWidth} />
       <div className="shrink-0 px-3 pt-2.5">
         <Input
           className="h-8 text-[13px]"

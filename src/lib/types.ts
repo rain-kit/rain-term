@@ -25,6 +25,14 @@ export interface TerminalSettings {
   cursorStyle: CursorStyle;
 }
 
+/** 顶栏“工具”里的开关（src-tauri/src/config.rs 的 ToolsConfig），导出连接时一起导出。 */
+export interface ToolsSettings {
+  enhance: {
+    /** 在 vim 等全屏程序里单击时把光标移到点击的位置。 */
+    clickMovesCursor: boolean;
+  };
+}
+
 export interface Settings {
   logLevel: LogLevel;
   theme: ThemeMode;
@@ -32,6 +40,7 @@ export interface Settings {
   /** 后端识别的系统语言，系统语言不受支持时为 en。 */
   systemLanguage: Locale;
   terminal: TerminalSettings;
+  tools: ToolsSettings;
   dataDir: string;
   logDir: string;
   version: string;
@@ -49,7 +58,7 @@ export interface LogEntry {
 }
 
 /** terminal 不传时保持不变。 */
-export type SettingsInput = Pick<Settings, "logLevel" | "theme" | "language"> & { terminal?: TerminalSettings };
+export type SettingsInput = Pick<Settings, "logLevel" | "theme" | "language"> & { terminal?: TerminalSettings; tools?: ToolsSettings };
 
 /** 见 src-tauri/src/update.rs。 */
 export interface UpdateInfo {

@@ -77,7 +77,9 @@ function SettingsProvider({ children }: { children: ReactNode }) {
   const dark = theme === "dark" || (theme === "system" && systemDark);
 
   useEffect(() => {
-    settingsApi.get().then(setSettings).catch(toast.error);
+    const load = () => settingsApi.get().then(setSettings).catch(toast.error);
+    load();
+    return events.onSettingsChanged(load);
   }, []);
 
   useEffect(() => {

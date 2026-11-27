@@ -60,7 +60,8 @@ pub async fn conn_export(
     s: S<'_>,
     ids: Vec<String>,
 ) -> ApiResult<Option<ExportResult>> {
-    let (text, count) = s.conns.export(&ids)?;
+    let tools = s.config.lock().unwrap().tools.clone();
+    let (text, count) = s.conns.export(&ids, &tools)?;
     let name = format!(
         "rain-term-connections-{}.json",
         chrono::Local::now().format("%Y%m%d")
@@ -82,7 +83,7 @@ pub async fn conn_export(
     }))
 }
 
-/// 选择本应用导出的文件并导入，返回导入的数量；取消时返回 None。
+/// 选择本应用导出的文件并导入，返回导入的数量；取消时返回 None。文件里带的工具配置一并恢复。
 #[tauri::command]
 pub async fn conn_import(app: AppHandle, s: S<'_>) -> ApiResult<Option<usize>> {
     let dlg = app
@@ -93,7 +94,11 @@ pub async fn conn_import(app: AppHandle, s: S<'_>) -> ApiResult<Option<usize>> {
     let Some(path) = choose(dlg, false).await else {
         return Ok(None);
     };
-    s.conns.import_file(&path).map(Some)
+    let r = s.conns.import_file(&path)?;
+    if let Some(tools) = r.tools {
+        super::settings::import_tools(&app, &s, tools)?;
+    }
+    Ok(Some(r.count))
 }
 
 /// 选择 FinalShell 的数据目录（或其中的 conn 目录）并导入。取消时返回 None。

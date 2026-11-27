@@ -1,6 +1,8 @@
 /// 推送给前端的事件名，前端在 src/lib/api.ts 中订阅。
 /// 连接列表变化（新增、修改、删除、排序、导入），前端收到后重新拉取列表。
 pub const CONN_CHANGED: &str = "conn:changed";
+/// 设置在设置页以外被修改（导入连接时带入了工具配置），前端收到后重新读取设置。
+pub const SETTINGS_CHANGED: &str = "settings:changed";
 /// 需要用户确认主机指纹，载荷为 HostKeyPrompt。
 pub const HOST_KEY: &str = "hostkey:prompt";
 /// 指纹确认请求已结束（已回答、超时或连接取消），载荷为 requestId，前端据此关闭弹窗。

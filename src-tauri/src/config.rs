@@ -75,6 +75,21 @@ impl Default for TerminalConfig {
     }
 }
 
+/// 顶栏“工具”里的开关，按分组存放；导出连接时一起导出。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ToolsConfig {
+    pub enhance: EnhanceConfig,
+}
+
+/// “增强”分组，默认全部关闭。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct EnhanceConfig {
+    /// 在 vim 等全屏程序里单击时把光标移到点击的位置
+    pub click_moves_cursor: bool,
+}
+
 /// config.yaml 的内容。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -82,6 +97,7 @@ pub struct AppConfig {
     pub system: SystemConfig,
     pub ui: UiConfig,
     pub terminal: TerminalConfig,
+    pub tools: ToolsConfig,
 }
 
 pub const LOG_LEVELS: [&str; 4] = ["debug", "info", "warn", "error"];
@@ -264,6 +280,12 @@ mod tests {
         assert_eq!(cfg.ui.language, "system");
         assert_eq!(cfg.terminal.font_size, 16);
         assert_eq!(cfg.terminal.scrollback, 10_000);
+        assert!(!cfg.tools.enhance.click_moves_cursor, "增强功能默认关闭");
+
+        let cfg: AppConfig =
+            serde_yaml::from_str("tools:\n    enhance:\n        clickMovesCursor: true\n")
+                .unwrap();
+        assert!(cfg.tools.enhance.click_moves_cursor);
 
         // 旧版本写入的 app.autoCheckUpdate 不影响读取。
         let cfg: AppConfig = serde_yaml::from_str("app:\n    autoCheckUpdate: false\n").unwrap();

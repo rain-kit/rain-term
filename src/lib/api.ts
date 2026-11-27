@@ -140,6 +140,8 @@ export const updateApi = {
 /** 后端推送的事件，见 src-tauri/src/events.rs。 */
 export const events = {
   onConnChanged: (fn: () => void) => sub<null>("conn:changed", () => fn()),
+  /** 设置在设置页以外被修改（导入连接时带入了工具配置）。 */
+  onSettingsChanged: (fn: () => void) => sub<null>("settings:changed", () => fn()),
   onHostKey: (fn: (p: HostKeyPrompt) => void) => sub<HostKeyPrompt>("hostkey:prompt", fn),
   /** 请求已结束（回答、超时或连接取消），载荷为 requestId。 */
   onHostKeyDone: (fn: (requestId: string) => void) => sub<string>("hostkey:done", fn),

@@ -12,7 +12,6 @@ import {
   FolderPlus,
   FolderSymlink,
   House,
-  LoaderCircle,
   Pencil,
   RotateCw,
   Trash2,
@@ -25,6 +24,7 @@ import { formatBytes, formatTime } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useToast } from "../lib/store";
 import type { FileEntry, I18nMsg, SftpEvent, Transfer } from "../lib/types";
+import { ConnStatus } from "./StatusBar";
 import type { TabStatus } from "./TabBar";
 import { Button, Confirm, ContextMenu, cx, Dialog, IconButton, Input, type MenuItem } from "./ui";
 
@@ -546,24 +546,14 @@ export default function SftpPanel({
         </div>
       )}
 
-      {!connected && (
-        <div className="flex shrink-0 items-center gap-3 border-t border-line bg-surface px-4 py-2 text-[13px]">
-          {status.s === "connecting" ? (
-            <>
-              <LoaderCircle size={15} className="animate-spin text-muted" />
-              <span className="text-muted">{t("sftp.connecting", { name })}</span>
-            </>
-          ) : (
-            <>
-              <span className="min-w-0 flex-1 truncate" title={status.message}>
-                {status.message}
-              </span>
-              <Button size="sm" variant="primary" icon={<RotateCw size={13} />} onClick={() => connect(cwdRef.current || undefined)}>
-                {t("terminal.reconnect")}
-              </Button>
-            </>
-          )}
-        </div>
+      {active && (
+        <ConnStatus
+          status={status.s}
+          name={name}
+          connectingText={t("sftp.connecting", { name })}
+          message={status.message}
+          onReconnect={() => connect(cwdRef.current || undefined)}
+        />
       )}
 
       <ContextMenu at={menu?.at ?? null} items={menu?.items ?? []} onClose={() => setMenu(null)} />

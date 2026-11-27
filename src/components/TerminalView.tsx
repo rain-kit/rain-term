@@ -6,14 +6,16 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { ArrowDown, ArrowUp, CaseSensitive, LoaderCircle, RotateCw, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CaseSensitive, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { errorMessage, sessionApi, settingsApi } from "../lib/api";
+import { clickMovesCursor } from "../lib/clickMove";
 import { useI18n } from "../lib/i18n";
 import { useSettings, useToast } from "../lib/store";
 import { isLightScheme, terminalTheme } from "../lib/terminalThemes";
 import type { SessionClosed, TerminalSettings } from "../lib/types";
-import { Button, Confirm, cx, IconButton } from "./ui";
+import { ConnStatus } from "./StatusBar";
+import { Confirm, cx, IconButton } from "./ui";
 
 export type TermStatus = "connecting" | "connected" | "closed";
 
@@ -125,6 +127,8 @@ export default function TerminalView({
   const input = useRef<{ queue: (string | Uint8Array)[]; busy: boolean }>({ queue: [], busy: false });
   const copyOnSelect = useRef(false);
   copyOnSelect.current = settings?.terminal.copyOnSelect ?? false;
+  const clickMoves = useRef(false);
+  clickMoves.current = settings?.tools.enhance.clickMovesCursor ?? false;
   const productionRef = useRef(production);
   productionRef.current = production;
   const onStatusRef = useRef(onStatus);
@@ -258,7 +262,11 @@ export default function TerminalView({
     fit.current = fitAddon;
     search.current = searchAddon;
 
-    xt.onData((d) => send(d));
+    const clickMove = clickMovesCursor(xt, el, () => clickMoves.current, send);
+    xt.onData((d) => {
+      clickMove.cancel();
+      send(d);
+    });
     xt.onBinary((d) => send(Uint8Array.from(d, (c) => c.charCodeAt(0))));
     xt.onSelectionChange(() => {
       if (copyOnSelect.current && xt.hasSelection()) writeText(xt.getSelection()).catch(() => {});
@@ -318,6 +326,7 @@ export default function TerminalView({
       cancelAnimationFrame(frame);
       clearTimeout(timer);
       el.removeEventListener("paste", onPaste, true);
+      clickMove.dispose();
       if (session.current) sessionApi.close(session.current).catch(() => {});
       session.current = null;
       setWebgl(xt, gl, false);
@@ -348,14 +357,17 @@ export default function TerminalView({
   const bg = settings ? terminalTheme(settings.terminal.colorScheme, dark).background : undefined;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col" style={{ background: bg }}>
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         ref={box}
         className="min-h-0 flex-1 overflow-hidden py-1 pl-2"
+        style={{ background: bg }}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
           const xt = term.current;
+          // 程序自己处理鼠标时（vim 的 set mouse=a、tmux 等）右键已经发给了程序；按住 Shift 仍然粘贴。
+          if (xt && xt.modes.mouseTrackingMode !== "none" && !e.shiftKey) return;
           if (xt?.hasSelection() && !copyOnSelect.current) {
             copy();
             xt.clearSelection();
@@ -375,24 +387,14 @@ export default function TerminalView({
         />
       )}
 
-      {status.s !== "connected" && (
-        <div className="absolute inset-x-0 bottom-0 flex items-center gap-3 border-t border-line bg-surface/95 px-4 py-2 text-[13px] backdrop-blur">
-          {status.s === "connecting" ? (
-            <>
-              <LoaderCircle size={15} className="animate-spin text-muted" />
-              <span className="text-muted">{t("terminal.connecting", { name })}</span>
-            </>
-          ) : (
-            <>
-              <span className="min-w-0 flex-1 truncate" title={status.message}>
-                {status.message}
-              </span>
-              <Button size="sm" variant="primary" icon={<RotateCw size={13} />} onClick={reconnect}>
-                {t("terminal.reconnect")}
-              </Button>
-            </>
-          )}
-        </div>
+      {active && (
+        <ConnStatus
+          status={status.s}
+          name={name}
+          connectingText={t("terminal.connecting", { name })}
+          message={status.message}
+          onReconnect={reconnect}
+        />
       )}
 
       <Confirm

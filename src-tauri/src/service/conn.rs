@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::hostkey::HostKeyService;
+use crate::config::ToolsConfig;
 use crate::core::ssh::jump::{self, Hop};
 use crate::core::ssh::{self, SshTarget};
 use crate::error::{self, ApiError, ApiResult};
@@ -39,6 +40,16 @@ struct ExportFile {
     version: u32,
     exported_at: DateTime<Local>,
     connections: Vec<Connection>,
+    /// 旧版本导出的文件没有这一项。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tools: Option<ToolsConfig>,
+}
+
+/// 导入的结果：连接数量和文件里带的工具配置。
+#[derive(Debug)]
+pub struct Imported {
+    pub count: usize,
+    pub tools: Option<ToolsConfig>,
 }
 
 const EXPORT_APP: &str = "rain-dial";
@@ -226,8 +237,8 @@ impl ConnService {
         Ok(())
     }
 
-    /// 导出为 JSON，不含密码。ids 为空时导出全部；导出部分连接时自动带上它们的跳板机。
-    pub fn export(&self, ids: &[String]) -> ApiResult<(String, usize)> {
+    /// 导出为 JSON，不含密码，附带工具配置。ids 为空时导出全部；导出部分连接时自动带上它们的跳板机。
+    pub fn export(&self, ids: &[String], tools: &ToolsConfig) -> ApiResult<(String, usize)> {
         let list = self.store.list()?;
         let selected: Vec<Connection> = if ids.is_empty() {
             list
@@ -262,6 +273,7 @@ impl ConnService {
                     c
                 })
                 .collect(),
+            tools: Some(tools.clone()),
         };
         let text =
             serde_json::to_string_pretty(&file).map_err(|e| error::EXPORT_FAILED.cause(e))?;
@@ -270,13 +282,15 @@ impl ConnService {
 
     /// 导入本应用导出的连接，返回导入的数量。其他终端的格式走各自的导入函数。
     /// 每个连接重新生成 ID，文件内的跳板机引用随之改为新 ID；任何一个连接无效时整体不导入。
-    /// 文件里即使写了密码也会被忽略。
-    pub fn import(&self, text: &str) -> ApiResult<usize> {
-        self.commit_import(parse_import(text)?, false)
+    /// 文件里即使写了密码也会被忽略。工具配置原样返回，由调用方保存。
+    pub fn import(&self, text: &str) -> ApiResult<Imported> {
+        let (conns, tools) = parse_import(text)?;
+        let count = self.commit_import(conns, false)?;
+        Ok(Imported { count, tools })
     }
 
     /// 从本应用导出的文件导入。
-    pub fn import_file(&self, path: &Path) -> ApiResult<usize> {
+    pub fn import_file(&self, path: &Path) -> ApiResult<Imported> {
         let bytes = std::fs::read(path).map_err(|e| error::IMPORT_FAILED.cause(e))?;
         let Ok(text) = std::str::from_utf8(&bytes) else {
             return Err(error::IMPORT_FAILED.msg(msg!("err.import.invalidFile", "文件格式不正确")));
@@ -466,16 +480,16 @@ fn read_moba_text(path: &Path) -> ApiResult<String> {
     Ok(text.into_owned())
 }
 
-fn parse_import(text: &str) -> ApiResult<Vec<Connection>> {
+fn parse_import(text: &str) -> ApiResult<(Vec<Connection>, Option<ToolsConfig>)> {
     let invalid = |e: serde_json::Error| {
         error::IMPORT_FAILED.msg(msg!("err.import.invalidFile", "文件格式不正确").with_cause(e))
     };
     let text = text.trim_start_matches('\u{feff}');
     let value: serde_json::Value = serde_json::from_str(text).map_err(invalid)?;
-    let list = match value {
-        serde_json::Value::Array(_) => value,
+    let (list, tools) = match value {
+        serde_json::Value::Array(_) => (value, None),
         serde_json::Value::Object(mut obj) => match obj.remove("connections") {
-            Some(v) => v,
+            Some(v) => (v, obj.remove("tools")),
             None => {
                 return Err(
                     error::IMPORT_FAILED.msg(msg!("err.import.invalidFile", "文件格式不正确"))
@@ -484,7 +498,11 @@ fn parse_import(text: &str) -> ApiResult<Vec<Connection>> {
         },
         _ => return Err(error::IMPORT_FAILED.msg(msg!("err.import.invalidFile", "文件格式不正确"))),
     };
-    serde_json::from_value(list).map_err(invalid)
+    let tools = tools
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(invalid)?;
+    Ok((serde_json::from_value(list).map_err(invalid)?, tools))
 }
 
 #[cfg(test)]
@@ -712,12 +730,15 @@ mod tests {
         create(&f.svc, ssh("x", ""));
 
         // 只导出 m 时带上它的跳板机 b 和 b 的跳板机 a。
-        let (text, count) = f.svc.export(std::slice::from_ref(&m.id)).unwrap();
+        let mut tools = ToolsConfig::default();
+        tools.enhance.click_moves_cursor = true;
+        let (text, count) = f.svc.export(std::slice::from_ref(&m.id), &tools).unwrap();
         assert_eq!(count, 3);
         assert!(!text.contains("pw"), "导出文件不含密码");
 
-        let n = f.svc.import(&text).unwrap();
-        assert_eq!(n, 3);
+        let r = f.svc.import(&text).unwrap();
+        assert_eq!(r.count, 3);
+        assert_eq!(r.tools, Some(tools), "工具配置随文件导入");
         let list = f.svc.list().unwrap();
         assert_eq!(list.len(), 7);
         let imported = &list[4..];
@@ -745,11 +766,18 @@ mod tests {
         let err = f.svc.import(bad).unwrap_err();
         assert_eq!(err.msg.i18n, "err.import.invalidConn");
         assert_eq!(f.svc.list().unwrap().len(), 7);
+        let r = f
+            .svc
+            .import(r#"[{"kind":"ssh","host":"h","user":"u"}]"#)
+            .unwrap();
+        assert_eq!((r.count, r.tools), (1, None));
+        // 旧版本导出的文件没有 tools。
+        let old = r#"{"app":"rain-dial","version":1,"connections":[{"kind":"ssh","host":"h","user":"u"}]}"#;
+        assert_eq!(f.svc.import(old).unwrap().tools, None);
+        let bad_tools = r#"{"connections":[{"kind":"ssh","host":"h","user":"u"}],"tools":{"enhance":{"clickMovesCursor":"yes"}}}"#;
         assert_eq!(
-            f.svc
-                .import(r#"[{"kind":"ssh","host":"h","user":"u"}]"#)
-                .unwrap(),
-            1
+            f.svc.import(bad_tools).unwrap_err().msg.i18n,
+            "err.import.invalidFile"
         );
         assert_eq!(
             f.svc.import("{}").unwrap_err().msg.i18n,
@@ -849,7 +877,7 @@ win=#91#4%10.0.0.3%3389%admin%
             .svc
             .import(r#"[{"kind":"ssh","host":"h","user":"u","password":"secret"}]"#)
             .unwrap();
-        assert_eq!(rain, 1);
+        assert_eq!(rain.count, 1);
         assert!(
             !f.svc
                 .list()

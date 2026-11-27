@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_opener::OpenerExt;
 use tracing::info;
 
 use crate::app::AppState;
-use crate::config::{self, AppConfig, TerminalConfig};
+use crate::config::{self, AppConfig, TerminalConfig, ToolsConfig};
 use crate::error::{self, ApiResult};
+use crate::events;
 use crate::i18n;
 use crate::logging::{self, LogEntry};
 use crate::{tray, window};
@@ -22,6 +23,7 @@ pub struct SettingsView {
     language: String,
     system_language: &'static str,
     terminal: TerminalConfig,
+    tools: ToolsConfig,
     data_dir: String,
     log_dir: String,
     version: String,
@@ -36,6 +38,9 @@ pub struct SettingsInput {
     /// 不传时保持不变。
     #[serde(default)]
     terminal: Option<TerminalConfig>,
+    /// 不传时保持不变。
+    #[serde(default)]
+    tools: Option<ToolsConfig>,
 }
 
 fn settings_view(app: &AppHandle, s: &AppState) -> SettingsView {
@@ -46,6 +51,7 @@ fn settings_view(app: &AppHandle, s: &AppState) -> SettingsView {
         language: cfg.ui.language,
         system_language: i18n::system().tag(),
         terminal: cfg.terminal,
+        tools: cfg.tools,
         data_dir: s.data_dir.display().to_string(),
         log_dir: s.log_dir().display().to_string(),
         version: app.package_info().version.to_string(),
@@ -70,6 +76,9 @@ pub async fn settings_save(
     if let Some(t) = input.terminal {
         cfg.terminal = t;
     }
+    if let Some(t) = input.tools {
+        cfg.tools = t;
+    }
     cfg.validate().map_err(|e| error::PARAM_INVALID.msg(e))?;
     config::save(&s.data_dir, &cfg).map_err(|e| error::SETTING_SAVE_FAILED.cause(e))?;
 
@@ -80,6 +89,20 @@ pub async fn settings_save(
     info!(level = %cfg.system.log_level, theme = %cfg.ui.theme, language = %cfg.ui.language, "设置已保存");
     *s.config.lock().unwrap() = cfg;
     Ok(settings_view(&app, &s))
+}
+
+/// 保存导入文件里带的工具配置，并通知前端重新读取设置。
+pub(super) fn import_tools(app: &AppHandle, s: &AppState, tools: ToolsConfig) -> ApiResult<()> {
+    let mut cfg: AppConfig = s.config.lock().unwrap().clone();
+    if cfg.tools == tools {
+        return Ok(());
+    }
+    cfg.tools = tools;
+    config::save(&s.data_dir, &cfg).map_err(|e| error::SETTING_SAVE_FAILED.cause(e))?;
+    *s.config.lock().unwrap() = cfg;
+    info!("已导入工具配置");
+    let _ = app.emit(events::SETTINGS_CHANGED, ());
+    Ok(())
 }
 
 #[tauri::command]
