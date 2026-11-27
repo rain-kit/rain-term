@@ -43,8 +43,8 @@ function ToolsMenu() {
   const toast = useToast();
   const { settings, save } = useSettings();
   const tools = settings?.tools;
-  const setEnhance = (patch: Partial<ToolsSettings["enhance"]>) =>
-    tools && save({ tools: { ...tools, enhance: { ...tools.enhance, ...patch } } }).catch(toast.error);
+  const setGroup = <K extends keyof ToolsSettings>(group: K, patch: Partial<ToolsSettings[K]>) =>
+    tools && save({ tools: { ...tools, [group]: { ...tools[group], ...patch } } }).catch(toast.error);
   return (
     <Menu
       trigger={(open) => (
@@ -55,12 +55,19 @@ function ToolsMenu() {
       footer={
         tools && (
           <div className="w-80 px-2.5 py-2">
-            <div className="mb-2 text-xs font-semibold tracking-wide text-muted">{t("tools.enhance")}</div>
+            <div className="mb-2 text-xs font-semibold tracking-wide text-muted">{t("tools.sftp")}</div>
+            <SwitchRow
+              title={t("tools.sftpSudo")}
+              desc={t("tools.sftpSudoDesc")}
+              checked={tools.sftp.sudo}
+              onChange={(sudo) => setGroup("sftp", { sudo })}
+            />
+            <div className="mt-4 mb-2 text-xs font-semibold tracking-wide text-muted">{t("tools.enhance")}</div>
             <SwitchRow
               title={t("tools.clickMovesCursor")}
               desc={t("tools.clickMovesCursorDesc")}
               checked={tools.enhance.clickMovesCursor}
-              onChange={(clickMovesCursor) => setEnhance({ clickMovesCursor })}
+              onChange={(clickMovesCursor) => setGroup("enhance", { clickMovesCursor })}
             />
           </div>
         )

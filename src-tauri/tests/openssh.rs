@@ -20,7 +20,7 @@ use rain_dial::service::conn::ConnService;
 use rain_dial::service::hostkey::HostKeyService;
 use rain_dial::service::pool::ClientPool;
 use rain_dial::service::session::{SessionEvent, SessionService};
-use rain_dial::service::sftp::{FileKind, SftpEvent, SftpService};
+use rain_dial::service::sftp::{FileKind, OpenOptions, SftpEvent, SftpService};
 use rain_dial::store::ConnStore;
 use russh::keys::ssh_key::LineEnding;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
@@ -257,7 +257,12 @@ impl Fixture {
         let (tx, rx) = unbounded_channel();
         let o = self
             .sftp
-            .open(conn_id, Box::new(move |e| drop(tx.send(e))))
+            .open(
+                conn_id,
+                OpenOptions::default(),
+                false,
+                Box::new(move |e| drop(tx.send(e))),
+            )
             .await
             .unwrap();
         Panel {

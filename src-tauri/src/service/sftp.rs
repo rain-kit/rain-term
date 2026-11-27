@@ -12,7 +12,7 @@ use std::time::Duration;
 use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::protocol::{FileAttributes, FileType};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -21,9 +21,11 @@ use tracing::{info, warn};
 
 use super::conn::ConnService;
 use super::pool::{Client, ClientPool};
-use crate::core::ssh::sftp::{describe, is_not_found};
+use crate::core::ssh::SshClient;
+use crate::core::ssh::sftp::{SudoError, describe, is_not_found};
 use crate::error::{self, ApiError, ApiResult};
 use crate::i18n::Msg;
+use crate::model::{AuthType, SshParams};
 use crate::util::new_id;
 
 const BUF_SIZE: usize = 256 * 1024;
@@ -79,6 +81,18 @@ pub struct Opened {
     pub id: String,
     /// 初始目录：连接设置了登录后初始目录时用它，否则是用户主目录。
     pub path: String,
+    /// 是否用 sudo 以 root 身份打开。
+    pub sudo: bool,
+}
+
+/// 打开面板时的选项。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OpenOptions {
+    /// 是否用 sudo 以 root 身份打开；为 None 时按设置。
+    pub sudo: Option<bool>,
+    /// 用户输入的 sudo 密码，只用于这一次打开。
+    pub sudo_password: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -188,15 +202,32 @@ impl SftpService {
     }
 
     /// 打开 SFTP 面板；传输进度和断开通知从 sink 推出。
-    pub async fn open(self: &Arc<Self>, conn_id: &str, sink: SftpSink) -> ApiResult<Opened> {
+    /// sudo 为 None 时按连接的设置，连接没有单独设置时按 global_sudo（顶栏“工具”里的设置）。
+    pub async fn open(
+        self: &Arc<Self>,
+        conn_id: &str,
+        opts: OpenOptions,
+        global_sudo: bool,
+        sink: SftpSink,
+    ) -> ApiResult<Opened> {
         let conn = self.conns.resolve(conn_id)?;
         let p = conn.ssh_params().map_err(|m| error::CONN_INVALID.msg(m))?;
+        let sudo = opts.sudo.unwrap_or_else(|| p.sftp_sudo.enabled(global_sudo));
 
         // 复用的连接可能刚断开、还没被发现，这时重新连接再试一次。
         let mut retry = true;
         let (client, sftp) = loop {
             let (client, reused) = self.pool.acquire(&conn, p).await?;
-            match client.ssh.open_sftp().await {
+            let r = if sudo {
+                open_sudo(&client.ssh, p, opts.sudo_password.as_deref()).await
+            } else {
+                client
+                    .ssh
+                    .open_sftp()
+                    .await
+                    .map_err(|e| error::SFTP_OPEN_FAILED.msg(e.msg()))
+            };
+            match r {
                 Ok(s) => break (client, s),
                 Err(e) => {
                     self.pool.release(&client);
@@ -204,8 +235,10 @@ impl SftpService {
                         retry = false;
                         continue;
                     }
-                    warn!(conn = %conn.name, err = %e, "打开 SFTP 失败");
-                    return Err(error::SFTP_OPEN_FAILED.msg(e.msg()));
+                    if e.code == error::SFTP_OPEN_FAILED.0 {
+                        warn!(conn = %conn.name, sudo, err = %e.msg.text(), "打开 SFTP 失败");
+                    }
+                    return Err(e);
                 }
             }
         };
@@ -230,7 +263,7 @@ impl SftpService {
             .lock()
             .unwrap()
             .insert(id.clone(), panel.clone());
-        info!(conn = %conn.name, panel = %id, path = %path, "SFTP 已打开");
+        info!(conn = %conn.name, panel = %id, path = %path, sudo, "SFTP 已打开");
 
         tokio::spawn(worker(panel.clone(), rx, self.pool.clone()));
         let (svc, pid) = (self.clone(), id.clone());
@@ -246,7 +279,7 @@ impl SftpService {
                 }
             }
         });
-        Ok(Opened { id, path })
+        Ok(Opened { id, path, sudo })
     }
 
     fn panel(&self, id: &str) -> ApiResult<Arc<Panel>> {
@@ -433,6 +466,29 @@ fn enqueue(p: &Panel, direction: Direction, name: String, src: String, dst: Stri
         src,
         dst,
     }
+}
+
+/// 用 sudo 打开 SFTP：先试免密 sudo，需要密码时用 password；没有提供时再试登录密码（Ubuntu 等系统上 sudo 密码通常就是登录密码）。
+async fn open_sudo(ssh: &SshClient, p: &SshParams, password: Option<&str>) -> ApiResult<SftpSession> {
+    let fail = |e: SudoError| match e {
+        SudoError::PasswordRequired => error::SFTP_SUDO_PASSWORD_REQUIRED.err(),
+        SudoError::WrongPassword => error::SFTP_SUDO_WRONG_PASSWORD.err(),
+        SudoError::Ssh(e) => error::SFTP_OPEN_FAILED.msg(e.msg()),
+    };
+    match ssh.open_sftp_sudo(None).await {
+        Err(SudoError::PasswordRequired) => {}
+        r => return r.map_err(fail),
+    }
+    if let Some(pw) = password {
+        return ssh.open_sftp_sudo(Some(pw)).await.map_err(fail);
+    }
+    if p.auth == AuthType::Password && !p.password.is_empty() {
+        match ssh.open_sftp_sudo(Some(&p.password)).await {
+            Err(SudoError::WrongPassword) => {}
+            r => return r.map_err(fail),
+        }
+    }
+    Err(error::SFTP_SUDO_PASSWORD_REQUIRED.err())
 }
 
 fn failed(path: &str, e: &SftpError) -> ApiError {

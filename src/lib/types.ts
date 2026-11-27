@@ -30,6 +30,10 @@ export interface ToolsSettings {
     /** 在 vim 等全屏程序里单击时把光标移到点击的位置。 */
     clickMovesCursor: boolean;
   };
+  sftp: {
+    /** 连接没有单独设置时，SFTP 是否用 sudo 以 root 身份打开。 */
+    sudo: boolean;
+  };
 }
 
 export interface Settings {
@@ -92,9 +96,14 @@ export interface SshParams {
   initDir?: string;
   /** 无痕模式：本次会话的命令不写入历史文件 */
   incognito?: boolean;
+  /** SFTP 是否用 sudo 以 root 身份打开，不传时按工具里的设置 */
+  sftpSudo?: SftpSudo;
   password?: string;
   keyPassphrase?: string;
 }
+
+/** default 表示按顶栏“工具”里的设置。 */
+export type SftpSudo = "default" | "off" | "on";
 
 /** 远程桌面的分辨率：跟随标签大小，或固定为 width × height。 */
 export type RdpResolution = "fit" | "fixed";
@@ -200,6 +209,15 @@ export interface SftpOpened {
   id: string;
   /** 初始目录。 */
   path: string;
+  /** 是否用 sudo 以 root 身份打开。 */
+  sudo: boolean;
+}
+
+export interface SftpOpenOptions {
+  /** 是否用 sudo 以 root 身份打开；不传时按连接和工具里的设置。 */
+  sudo?: boolean;
+  /** 用户输入的 sudo 密码，只用于这一次打开。 */
+  sudoPassword?: string;
 }
 
 export type TransferDirection = "upload" | "download";

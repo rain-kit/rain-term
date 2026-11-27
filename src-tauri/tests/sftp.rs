@@ -16,7 +16,9 @@ use rain_dial::service::conn::ConnService;
 use rain_dial::service::hostkey::HostKeyService;
 use rain_dial::service::pool::ClientPool;
 use rain_dial::service::session::{SessionEvent, SessionService};
-use rain_dial::service::sftp::{Direction, FileKind, SftpEvent, SftpService, Transfer};
+use rain_dial::service::sftp::{
+    Direction, FileKind, OpenOptions, SftpEvent, SftpService, Transfer,
+};
 use rain_dial::store::ConnStore;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
@@ -99,7 +101,12 @@ impl Fixture {
         let (tx, rx) = unbounded_channel();
         let o = self
             .sftp
-            .open(conn_id, Box::new(move |e| drop(tx.send(e))))
+            .open(
+                conn_id,
+                OpenOptions::default(),
+                false,
+                Box::new(move |e| drop(tx.send(e))),
+            )
             .await
             .unwrap();
         Panel {
@@ -591,7 +598,11 @@ async fn subsystem_disabled() {
     srv.sftp_off.store(true, Ordering::SeqCst);
     let f = fixture(&srv);
     let id = f.add_conn(&srv, "");
-    let err = f.sftp.open(&id, Box::new(|_| {})).await.unwrap_err();
+    let err = f
+        .sftp
+        .open(&id, OpenOptions::default(), false, Box::new(|_| {}))
+        .await
+        .unwrap_err();
     assert_eq!(err.code, error::SFTP_OPEN_FAILED.0);
     assert!(
         err.msg.text().contains("服务器未启用 SFTP"),

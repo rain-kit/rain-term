@@ -77,6 +77,7 @@ impl Default for TerminalConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct ToolsConfig {
     pub enhance: EnhanceConfig,
+    pub sftp: SftpToolsConfig,
 }
 
 /// “增强”分组，默认全部关闭。
@@ -85,6 +86,14 @@ pub struct ToolsConfig {
 pub struct EnhanceConfig {
     /// 在 vim 等全屏程序里单击时把光标移到点击的位置
     pub click_moves_cursor: bool,
+}
+
+/// “SFTP”分组。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SftpToolsConfig {
+    /// 连接没有单独设置时，SFTP 是否用 sudo 以 root 身份打开
+    pub sudo: bool,
 }
 
 /// config.yaml 的内容。
@@ -278,6 +287,7 @@ mod tests {
         assert_eq!(cfg.terminal.font_size, 16);
         assert_eq!(cfg.terminal.scrollback, 10_000);
         assert!(!cfg.tools.enhance.click_moves_cursor, "增强功能默认关闭");
+        assert!(!cfg.tools.sftp.sudo, "SFTP 默认不用 sudo");
 
         let cfg: AppConfig =
             serde_yaml::from_str("tools:\n    enhance:\n        clickMovesCursor: true\n")

@@ -18,6 +18,7 @@ import type {
   SettingsInput,
   SftpEvent,
   SftpOpened,
+  SftpOpenOptions,
   TestResult,
   Transfer,
   UpdateInfo,
@@ -29,6 +30,14 @@ import type {
 export interface ApiError extends I18nMsg {
   code: number;
 }
+
+/** 前端要区别处理的错误码，与 src-tauri/src/error.rs 一致。 */
+export const ErrorCode = {
+  sftpSudoPasswordRequired: 400004,
+  sftpSudoWrongPassword: 400005,
+} as const;
+
+export const errorCode = (e: unknown) => (e && typeof e === "object" && "code" in e ? (e as ApiError).code : undefined);
 
 export function errorMessage(e: unknown): string {
   if (typeof e === "string") return e;
@@ -105,10 +114,10 @@ export const sessionApi = {
 
 /** SFTP 面板，见 src-tauri/src/service/sftp.rs。和同一连接的终端标签共用 SSH 连接。 */
 export const sftpApi = {
-  open: (connId: string, onEvent: (e: SftpEvent) => void) => {
+  open: (connId: string, opts: SftpOpenOptions, onEvent: (e: SftpEvent) => void) => {
     const ch = new Channel<SftpEvent>();
     ch.onmessage = onEvent;
-    return invoke<SftpOpened>("sftp_open", { connId, onEvent: ch });
+    return invoke<SftpOpened>("sftp_open", { connId, opts, onEvent: ch });
   },
   list: (id: string, path: string) => invoke<Listing>("sftp_list", { id, path }),
   mkdir: (id: string, path: string) => invoke<void>("sftp_mkdir", { id, path }),

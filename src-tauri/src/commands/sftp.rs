@@ -5,7 +5,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::app::AppState;
 use crate::error::ApiResult;
 use crate::i18n::pick;
-use crate::service::sftp::{Listing, Opened, SftpEvent, SftpSink, Transfer};
+use crate::service::sftp::{Listing, OpenOptions, Opened, SftpEvent, SftpSink, Transfer};
 
 type S<'a> = State<'a, AppState>;
 
@@ -14,12 +14,16 @@ type S<'a> = State<'a, AppState>;
 pub async fn sftp_open(
     s: S<'_>,
     conn_id: String,
+    opts: Option<OpenOptions>,
     on_event: Channel<SftpEvent>,
 ) -> ApiResult<Opened> {
     let sink: SftpSink = Box::new(move |ev| {
         let _ = on_event.send(ev);
     });
-    s.sftp.open(&conn_id, sink).await
+    let global_sudo = s.config.lock().unwrap().tools.sftp.sudo;
+    s.sftp
+        .open(&conn_id, opts.unwrap_or_default(), global_sudo, sink)
+        .await
 }
 
 #[tauri::command]

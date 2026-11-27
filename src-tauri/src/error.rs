@@ -115,6 +115,9 @@ pub const MONITOR_NOT_CONNECTED: Code =
 pub const SFTP_OPEN_FAILED: Code = Code(400001, "err.sftpOpenFailed", "打开 SFTP 失败");
 pub const SFTP_NOT_FOUND: Code = Code(400002, "err.sftpNotFound", "SFTP 会话不存在或已关闭");
 pub const SFTP_FAILED: Code = Code(400003, "err.sftpFailed", "SFTP 操作失败");
+pub const SFTP_SUDO_PASSWORD_REQUIRED: Code =
+    Code(400004, "err.sftpSudoPasswordRequired", "sudo 需要密码");
+pub const SFTP_SUDO_WRONG_PASSWORD: Code = Code(400005, "err.sftpSudoWrongPassword", "sudo 密码错误");
 
 // -------------------- 工作区 500000 -------------------- //
 pub const WORKSPACE_SAVE_FAILED: Code =

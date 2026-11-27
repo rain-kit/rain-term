@@ -4,8 +4,8 @@ import { connApi } from "../lib/api";
 import { loadGroups } from "../lib/groups";
 import { CONN_COLORS, connAddress, DEFAULT_PORT, DEFAULT_USER, KIND_LABEL, RDP_MAX_SIZE, RDP_MIN_SIZE, type ConnColor } from "../lib/format";
 import { t, useI18n } from "../lib/i18n";
-import { useConns, useToast } from "../lib/store";
-import type { AuthType, ConnKind, ConnView, RdpResolution, SaveConnReq } from "../lib/types";
+import { useConns, useSettings, useToast } from "../lib/store";
+import type { AuthType, ConnKind, ConnView, RdpResolution, SaveConnReq, SftpSudo } from "../lib/types";
 import KindIcon from "./KindIcon";
 import { Button, cx, Dialog, Field, IconButton, Input, PasswordInput, Segmented, Select, SwitchRow } from "./ui";
 
@@ -28,6 +28,7 @@ interface Form {
   keyPassphrase: string;
   keepaliveSeconds: string;
   initDir: string;
+  sftpSudo: SftpSudo;
   // 远程桌面
   domain: string;
   resolution: RdpResolution;
@@ -63,6 +64,7 @@ function toForm(c?: ConnView | null): Form {
     keyPassphrase: "",
     keepaliveSeconds: String(ssh?.keepaliveSeconds ?? 30),
     initDir: ssh?.initDir ?? "",
+    sftpSudo: ssh?.sftpSudo ?? "default",
     domain: rdp?.domain ?? "",
     resolution: rdp?.resolution ?? "fit",
     width: String(rdp?.width ?? DEFAULT_WIDTH),
@@ -126,6 +128,7 @@ function toReq(f: Form, id: string, clear: { password: boolean; keyPassphrase: b
     keyPassphrase: f.auth === "key" ? f.keyPassphrase : "",
     keepaliveSeconds: Number(f.keepaliveSeconds),
     initDir: f.initDir.trim(),
+    sftpSudo: f.sftpSudo,
     incognito: f.incognito,
     clearKeyPassphrase: clear.keyPassphrase,
   };
@@ -222,6 +225,7 @@ export default function ConnEditor({
   const { t } = useI18n();
   const toast = useToast();
   const { conns } = useConns();
+  const { settings } = useSettings();
   const [form, setForm] = useState<Form>(() => toForm(conn));
   const [errors, setErrors] = useState<Errors>({});
   const [clear, setClear] = useState({ password: false, keyPassphrase: false });
@@ -526,6 +530,24 @@ export default function ConnEditor({
               <Input value={f.keepaliveSeconds} invalid={!!errors.keepaliveSeconds} onChange={(e) => set("keepaliveSeconds", e.target.value)} />
             </Field>
           </Row>
+        )}
+        {!rdp && (
+          <Field
+            label={t("editor.sftpSudo")}
+            hint={t(f.sftpSudo === "default" ? "editor.sftpSudoHintDefault" : "editor.sftpSudoHint", {
+              state: t(settings?.tools.sftp.sudo ? "editor.sftpSudo.on" : "editor.sftpSudo.off"),
+            })}
+          >
+            <Segmented<SftpSudo>
+              value={f.sftpSudo}
+              onChange={(v) => set("sftpSudo", v)}
+              options={[
+                { value: "default", label: t("editor.sftpSudo.default") },
+                { value: "off", label: t("editor.sftpSudo.off") },
+                { value: "on", label: t("editor.sftpSudo.on") },
+              ]}
+            />
+          </Field>
         )}
       </Section>
 

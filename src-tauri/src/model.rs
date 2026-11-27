@@ -30,6 +30,32 @@ pub enum AuthType {
     Agent,
 }
 
+/// SFTP 是否用 sudo 以 root 身份打开。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SftpSudo {
+    /// 按顶栏“工具”里的设置。
+    #[default]
+    Default,
+    Off,
+    On,
+}
+
+impl SftpSudo {
+    pub fn is_default(&self) -> bool {
+        *self == SftpSudo::Default
+    }
+
+    /// global 是顶栏“工具”里的设置。
+    pub fn enabled(self, global: bool) -> bool {
+        match self {
+            SftpSudo::Default => global,
+            SftpSudo::Off => false,
+            SftpSudo::On => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SshParams {
@@ -50,6 +76,8 @@ pub struct SshParams {
     /// 无痕模式：禁止本次会话把命令写入历史文件。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub incognito: bool,
+    #[serde(skip_serializing_if = "SftpSudo::is_default")]
+    pub sftp_sudo: SftpSudo,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub password: String,
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -68,6 +96,7 @@ impl Default for SshParams {
             keepalive_seconds: DEFAULT_KEEPALIVE,
             init_dir: String::new(),
             incognito: false,
+            sftp_sudo: SftpSudo::Default,
             password: String::new(),
             key_passphrase: String::new(),
         }
@@ -525,15 +554,18 @@ pub(crate) mod tests {
         assert!(v.get("password").is_none());
         assert!(v.get("production").is_none(), "不是生产环境时不写这个字段");
         assert!(v.get("incognito").is_none(), "未开无痕时不写这个字段");
+        assert!(v.get("sftpSudo").is_none(), "按工具设置时不写这个字段");
         let back: Connection = serde_json::from_value(v).unwrap();
         assert_eq!(back, c);
 
         c.production = true;
         let p = ssh_of_mut(&mut c);
         p.incognito = true;
+        p.sftp_sudo = SftpSudo::On;
         let v = serde_json::to_value(&c).unwrap();
         assert_eq!(v["production"], true);
         assert_eq!(v["incognito"], true);
+        assert_eq!(v["sftpSudo"], "on");
         assert_eq!(serde_json::from_value::<Connection>(v).unwrap(), c);
 
         let minimal: Connection =
@@ -543,6 +575,14 @@ pub(crate) mod tests {
             (p.host.as_str(), p.port, p.keepalive_seconds),
             ("h", DEFAULT_SSH_PORT, DEFAULT_KEEPALIVE)
         );
+    }
+
+    #[test]
+    fn sftp_sudo_follows_global_by_default() {
+        assert!(SftpSudo::Default.enabled(true));
+        assert!(!SftpSudo::Default.enabled(false));
+        assert!(!SftpSudo::Off.enabled(true));
+        assert!(SftpSudo::On.enabled(false));
     }
 
     #[test]

@@ -15,18 +15,20 @@ import {
   LoaderCircle,
   Pencil,
   RotateCw,
+  Shield,
+  ShieldCheck,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { errorMessage, sftpApi } from "../lib/api";
+import { ErrorCode, errorCode, errorMessage, sftpApi } from "../lib/api";
 import { formatBytes, formatTime } from "../lib/format";
 import { useI18n } from "../lib/i18n";
-import { useToast } from "../lib/store";
-import type { FileEntry, I18nMsg, SftpEvent, Transfer } from "../lib/types";
+import { useConns, useSettings, useToast } from "../lib/store";
+import type { FileEntry, I18nMsg, SftpEvent, SftpOpenOptions, Transfer } from "../lib/types";
 import type { TabStatus } from "./TabBar";
-import { Button, Confirm, ContextMenu, cx, Dialog, IconButton, Input, type MenuItem } from "./ui";
+import { Button, Confirm, ContextMenu, cx, Dialog, IconButton, Input, PasswordInput, type MenuItem } from "./ui";
 
 type TaskState = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -139,6 +141,18 @@ export default function SftpPanel({
   const nameInput = useRef<HTMLInputElement>(null);
   const onBusyRef = useRef(onBusy);
   onBusyRef.current = onBusy;
+  /** 最近一次以哪种身份打开；还没打开过时为 undefined，由后端按设置决定。 */
+  const [sudo, setSudo] = useState<boolean | undefined>(undefined);
+  const sudoRef = useRef(sudo);
+  sudoRef.current = sudo;
+  /** 用户输入过的 sudo 密码，只在本面板重新连接时使用，不保存。 */
+  const sudoPassword = useRef<string | undefined>(undefined);
+  const [asking, setAsking] = useState<{ path?: string; value: string; error?: string } | null>(null);
+  const [confirmRoot, setConfirmRoot] = useState(false);
+  const conn = useConns().conns.find((c) => c.id === connId);
+  const globalSudo = !!useSettings().settings?.tools.sftp.sudo;
+  const defaultSudo = conn?.kind === "ssh" && (conn.sftpSudo === "on" || (conn.sftpSudo !== "off" && globalSudo));
+  const asRoot = sudo ?? defaultSudo;
 
   const connected = status.s === "connected";
   const selected = entries.filter((e) => sel.has(e.path));
@@ -225,12 +239,19 @@ export default function SftpPanel({
     setQueueOpen(true);
   };
 
-  const connect = (path?: string) => {
+  /** 打开 SFTP；已打开时先关掉。opts.sudo 不传时沿用上次的身份。 */
+  const connect = (path?: string, opts: SftpOpenOptions = { sudo: sudoRef.current }) => {
     const my = ++gen.current;
+    if (panel.current) sftpApi.close(panel.current).catch(() => {});
+    panel.current = null;
     let ended = false;
     setStatus({ s: "connecting" });
+    const want: SftpOpenOptions = {
+      sudo: opts.sudo,
+      sudoPassword: opts.sudo === false ? undefined : (opts.sudoPassword ?? sudoPassword.current),
+    };
     sftpApi
-      .open(connId, (e) => {
+      .open(connId, want, (e) => {
         if (gen.current !== my) return;
         if (e.type !== "closed") return onTaskEvent(e);
         ended = true;
@@ -245,13 +266,32 @@ export default function SftpPanel({
           return;
         }
         panel.current = o.id;
+        setSudo(o.sudo);
+        if (o.sudo && want.sudoPassword) sudoPassword.current = want.sudoPassword;
         setHome(o.path);
         setStatus({ s: "connected" });
         if (!(await load(path ?? o.path)) && path) await load(o.path);
       })
       .catch((err) => {
-        if (gen.current === my) setStatus({ s: "closed", message: errorMessage(err) });
+        if (gen.current !== my) return;
+        const code = errorCode(err);
+        if (code === ErrorCode.sftpSudoPasswordRequired || code === ErrorCode.sftpSudoWrongPassword) {
+          setSudo(true);
+          const wrong = code === ErrorCode.sftpSudoWrongPassword;
+          if (wrong) sudoPassword.current = undefined;
+          setAsking({ path, value: "", error: wrong ? errorMessage(err) : undefined });
+        }
+        setStatus({ s: "closed", message: errorMessage(err) });
       });
+  };
+
+  const switchSudo = (to: boolean) => connect(cwdRef.current || undefined, { sudo: to });
+
+  const submitSudoPassword = () => {
+    if (!asking?.value) return;
+    const { path, value } = asking;
+    setAsking(null);
+    connect(path, { sudo: true, sudoPassword: value });
   };
 
   useEffect(() => {
@@ -459,6 +499,15 @@ export default function SftpPanel({
         <IconButton label={t("sftp.download")} size="sm" disabled={!connected || !selected.length} onClick={() => download(selected)}>
           <Download size={15} />
         </IconButton>
+        <IconButton
+          label={t(busy ? "sftp.sudoBusy" : asRoot ? "sftp.sudoOff" : "sftp.sudoOn")}
+          size="sm"
+          disabled={status.s === "connecting" || busy > 0}
+          onClick={() => (!asRoot && conn?.production ? setConfirmRoot(true) : switchSudo(!asRoot))}
+          className={cx(asRoot && "bg-amber-500/15 !text-amber-600 dark:!text-amber-400")}
+        >
+          {asRoot ? <ShieldCheck size={15} /> : <Shield size={15} />}
+        </IconButton>
       </div>
 
       {status.s === "connecting" && (
@@ -541,6 +590,14 @@ export default function SftpPanel({
       <div className="flex h-7 shrink-0 items-center gap-3 border-t border-line px-3 text-xs text-muted">
         <span>{t("sftp.items", { count: entries.length })}</span>
         {selected.length > 0 && <span>{t("sftp.selectedItems", { count: selected.length })}</span>}
+        {connected && sudo && (
+          <span
+            title={t("sftp.rootHint")}
+            className="ml-auto rounded bg-amber-500/15 px-1 text-[10px] leading-4 font-semibold text-amber-600 dark:text-amber-400"
+          >
+            root
+          </span>
+        )}
       </div>
 
       {tasks.length > 0 && (
@@ -638,6 +695,43 @@ export default function SftpPanel({
         }}
         onClose={() => setOverwriting(null)}
       />
+
+      <Confirm
+        open={confirmRoot}
+        title={t("sftp.sudoOn")}
+        message={t("sftp.sudoProdConfirm", { name })}
+        confirmText={t("sftp.sudoConfirm")}
+        danger
+        onConfirm={() => switchSudo(true)}
+        onClose={() => setConfirmRoot(false)}
+      />
+
+      <Dialog
+        open={!!asking}
+        onClose={() => setAsking(null)}
+        title={t("sftp.sudoPasswordTitle")}
+        width="max-w-sm"
+        footer={
+          <>
+            <Button onClick={() => setAsking(null)}>{t("common.cancel")}</Button>
+            <Button variant="primary" disabled={!asking?.value} onClick={submitSudoPassword}>
+              {t("common.confirm")}
+            </Button>
+          </>
+        }
+      >
+        <div className="mb-2 text-sm text-muted">{t("sftp.sudoPasswordDesc", { user: conn?.user ?? "" })}</div>
+        <PasswordInput
+          autoFocus
+          invalid={!!asking?.error}
+          value={asking?.value ?? ""}
+          onChange={(e) => setAsking((a) => a && { ...a, value: e.target.value, error: undefined })}
+          onKeyDown={(e) => e.key === "Enter" && submitSudoPassword()}
+        />
+        <div className={cx("mt-1.5 mb-1 text-xs", asking?.error ? "text-red-600 dark:text-red-400" : "text-muted")}>
+          {asking?.error ?? t("sftp.sudoPasswordHint")}
+        </div>
+      </Dialog>
     </div>
   );
 }
