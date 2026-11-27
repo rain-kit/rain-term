@@ -1,0 +1,57 @@
+[package]
+name = "rain-dial"
+version = "0.1.0"
+description = "SSH 客户端"
+license = "MIT"
+edition = "2024"
+default-run = "rain-dial"
+
+[lib]
+name = "rain_dial"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rain-dial"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.23.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+des = "0.8.1"
+ecb = "0.1.2"
+encoding_rs = "0.8.35"
+dirs = "7.0.0"
+hmac = "0.13.0"
+md-5 = "0.10.6"
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls", "system-proxy"] }
+russh = { version = "0.65.1", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serde_yaml = "0.9.34"
+sha1 = "0.11.0"
+sys-locale = "0.3.2"
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy"] }
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-util = { version = "0.7.20", features = ["rt"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["json", "registry", "chrono", "fmt"] }
+uuid = { version = "1.29.2", features = ["v4"] }
+
+[dev-dependencies]
+futures = "0.3.34"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,8 @@
+Port 22
+PermitRootLogin no
+PasswordAuthentication yes
+PubkeyAuthentication yes
+KbdInteractiveAuthentication no
+# 跳板机要允许 direct-tcpip。
+AllowTcpForwarding yes
+Subsystem sftp internal-sftp

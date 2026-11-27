@@ -1,0 +1,2 @@
+# 容器里用的文件（sshd_config 等）必须是 LF，Windows 上检出也不转换。
+src-tauri/tests/docker/** text eol=lf

@@ -1,0 +1,18 @@
+# tests/openssh.rs 启动的测试环境：跳板机 bastion 和目标机 target 在同一个内部网络里，
+# 端口只映射到 127.0.0.1 的随机端口，用 docker compose port 查询。
+name: rain-dial-it
+
+x-sshd: &sshd
+  build: .
+  healthcheck:
+    test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+    interval: 1s
+    retries: 30
+
+services:
+  bastion:
+    <<: *sshd
+    ports: ["127.0.0.1::22"]
+  target:
+    <<: *sshd
+    ports: ["127.0.0.1::22"]

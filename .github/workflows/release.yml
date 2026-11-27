@@ -1,0 +1,146 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            os: windows
+          - name: windows-arm64
+            platform: windows-latest
+            target: aarch64-pc-windows-msvc
+            bundles: nsis
+            os: windows
+          - name: macos-arm64
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+            os: macos
+          - name: macos-x64
+            platform: macos-latest
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+            os: macos
+          - name: linux-x64
+            platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,rpm
+            os: linux
+          - name: linux-arm64
+            platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            bundles: deb,rpm
+            os: linux
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Check tag matches app version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          APP_VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "v${APP_VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match tauri.conf.json version v${APP_VERSION}"
+            exit 1
+          fi
+
+      # 更新内容取自 ChangeLog.md，缺少当前版本时在这里失败，不必等到编译完。
+      - name: Render release notes
+        if: github.ref_type == 'tag'
+        id: notes
+        shell: bash
+        run: |
+          node .github/scripts/release-notes.mjs "${GITHUB_REF_NAME}" "${GITHUB_REPOSITORY}" > release-notes.out
+          {
+            echo 'body<<RELEASE_NOTES_EOF'
+            cat release-notes.out
+            echo
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config file \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev libdbus-1-dev patchelf
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Tag runs can only restore caches saved on the default branch, so only main saves.
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref_type == 'branch' }}
+
+      - name: Install frontend dependencies
+        run: npm ci --registry=https://registry.npmjs.org --replace-registry-host=always
+
+      - name: Build
+        if: github.ref_type == 'branch'
+        run: npx tauri build --target ${{ matrix.target }} --no-bundle
+
+      - name: Build and publish
+        if: github.ref_type == 'tag'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 应用内更新包的签名私钥，公钥在 tauri.conf.json 的 plugins.updater.pubkey。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Rain Term ${{ github.ref_name }}'
+          releaseBody: ${{ steps.notes.outputs.body }}
+          # 先建草稿，全部平台上传完后由 updater-json 生成 latest.json 并发布。
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+          # 文件名中的空格会被 GitHub 换成点，例如 Rain.Term_windows_0.1.0_x64-setup.exe；latest.json 里的下载地址按同一规则生成。
+          # .github/release-notes.md 和 README 中的下载文件名要与这里保持一致。
+          assetNamePattern: '[name]_${{ matrix.os }}_[version]_[arch][setup][ext]'
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+  updater-json:
+    needs: build
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/updater.yml
+    with:
+      tag: ${{ github.ref_name }}
