@@ -1,20 +1,16 @@
-import { ArrowDown, ArrowUp, ChevronDown, LoaderCircle, PanelBottom, PanelRight, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, LoaderCircle } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { errorMessage, monitorApi } from "../lib/api";
 import { formatBytes, formatPercent, formatRate, formatUptime } from "../lib/format";
 import { useI18n } from "../lib/i18n";
-import type { MonitorPosition, ProcInfo, ProcSort, ServerStats } from "../lib/types";
-import { ResizeHandle, useStoredSize, type SizeSpec } from "./Resizer";
-import { cx, IconButton } from "./ui";
+import type { ProcInfo, ProcSort, ServerStats } from "../lib/types";
+import { cx } from "./ui";
 
 /** 最多显示的进程数，与后端 service/monitor.rs 的 TOP 一致。 */
 const MAX_PROCS = 30;
 const DEFAULT_PROCS = 10;
 const COUNT_KEY = "monitor.procCount";
 const SORT_KEY = "monitor.sort";
-/** 放在右侧时宽度、放在下方时高度占标签内容区域的比例，两者分别保存。 */
-const WIDTH: SizeSpec = { key: "monitor.width", initial: 0.25, min: 0.05, max: 0.6 };
-const HEIGHT: SizeSpec = { key: "monitor.height", initial: 0.3, min: 0.05, max: 0.6 };
 
 const loadSort = (): ProcSort => (localStorage.getItem(SORT_KEY) === "mem" ? "mem" : "cpu");
 
@@ -194,27 +190,12 @@ function Overview({ stats: s }: { stats: ServerStats }) {
   );
 }
 
-/** 终端右侧或下方的服务器状态：负载、CPU、内存和占用最高的进程。只在连接已建立时采集。 */
-export default function MonitorPanel({
-  connId,
-  connected,
-  position,
-  onPosition,
-  onClose,
-}: {
-  connId: string;
-  connected: boolean;
-  position: MonitorPosition;
-  onPosition: (p: MonitorPosition) => void;
-  onClose: () => void;
-}) {
+/** 侧栏里的服务器状态：负载、CPU、内存和占用最高的进程。只在连接已建立时采集。 */
+export default function MonitorPanel({ connId, connected }: { connId: string; connected: boolean }) {
   const { t } = useI18n();
   const [stats, setStats] = useState<ServerStats | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [unsupported, setUnsupported] = useState(false);
-  const [width, setWidth, commitWidth] = useStoredSize(WIDTH);
-  const [height, setHeight, commitHeight] = useStoredSize(HEIGHT);
-  const bottom = position === "bottom";
 
   useEffect(() => {
     setStats(null);
@@ -266,33 +247,5 @@ export default function MonitorPanel({
       </div>
     );
 
-  return (
-    <aside
-      className={cx(
-        "relative flex min-h-0 min-w-0 shrink-0 flex-col border-line bg-surface/60 text-xs select-none",
-        bottom ? "border-t" : "border-l",
-      )}
-      style={bottom ? { height: `${height * 100}%` } : { width: `${width * 100}%` }}
-    >
-      {bottom ? (
-        <ResizeHandle spec={HEIGHT} side="top" size={height} onChange={setHeight} onCommit={commitHeight} />
-      ) : (
-        <ResizeHandle spec={WIDTH} side="left" size={width} onChange={setWidth} onCommit={commitWidth} />
-      )}
-      <div className={cx("flex shrink-0 items-center border-b border-line pr-1 pl-3", bottom ? "h-8" : "h-9")}>
-        <span className="flex-1 truncate text-[13px] font-medium">{t("monitor.title")}</span>
-        <IconButton
-          label={t(bottom ? "monitor.moveRight" : "monitor.moveBottom")}
-          size="sm"
-          onClick={() => onPosition(bottom ? "right" : "bottom")}
-        >
-          {bottom ? <PanelRight size={15} /> : <PanelBottom size={15} />}
-        </IconButton>
-        <IconButton label={t("monitor.hide")} size="sm" onClick={onClose}>
-          <X size={15} />
-        </IconButton>
-      </div>
-      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3">{body}</div>
-    </aside>
-  );
+  return <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-3 text-xs select-none">{body}</div>;
 }

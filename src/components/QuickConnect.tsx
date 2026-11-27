@@ -1,17 +1,17 @@
 import { History, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { colorClass, connAddress, defaultTab, isIncognito } from "../lib/format";
+import { colorClass, connAddress, isIncognito } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns } from "../lib/store";
-import type { ConnView, TabKind } from "../lib/types";
+import type { ConnView } from "../lib/types";
 import { cx, IncognitoBadge, ProdBadge } from "./ui";
 
 const Kbd = ({ children }: { children: ReactNode }) => (
   <kbd className="rounded border border-line bg-subtle px-1 py-px font-sans text-[10px] text-ink">{children}</kbd>
 );
 
-/** 快速连接：搜索全部连接，最近打开的排在前面；Enter 打开终端或远程桌面，Shift+Enter 打开 SFTP。 */
+/** 快速连接：搜索全部连接，最近打开的排在前面；Enter 打开终端或远程桌面。 */
 export default function QuickConnect({
   open,
   recent,
@@ -22,7 +22,7 @@ export default function QuickConnect({
   /** 最近打开的连接 ID，最近的在前。 */
   recent: string[];
   onClose: () => void;
-  onPick: (c: ConnView, kind: TabKind) => void;
+  onPick: (c: ConnView) => void;
 }) {
   const { t } = useI18n();
   const { conns } = useConns();
@@ -54,10 +54,10 @@ export default function QuickConnect({
 
   if (!open) return null;
 
-  const pick = (c: ConnView | undefined, sftp: boolean) => {
+  const pick = (c: ConnView | undefined) => {
     if (!c) return;
     onClose();
-    onPick(c, sftp && c.kind === "ssh" ? "sftp" : defaultTab(c));
+    onPick(c);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -71,7 +71,7 @@ export default function QuickConnect({
       setIndex((i) => (i + step + items.length) % items.length);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      pick(items[index], e.shiftKey);
+      pick(items[index]);
     }
   };
 
@@ -106,7 +106,7 @@ export default function QuickConnect({
                   key={c.id}
                   data-index={i}
                   onMouseMove={() => i !== index && setIndex(i)}
-                  onClick={(e) => pick(c, e.shiftKey)}
+                  onClick={() => pick(c)}
                   className={cx("flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2", i === index && "bg-accent/10")}
                 >
                   {color ? <span className={cx("size-2 shrink-0 rounded-full", color)} /> : <span className="size-2 shrink-0" />}
@@ -138,10 +138,6 @@ export default function QuickConnect({
           <span className="flex items-center gap-1">
             <Kbd>Enter</Kbd>
             {t("quick.hintOpen")}
-          </span>
-          <span className="flex items-center gap-1">
-            <Kbd>Shift+Enter</Kbd>
-            {t("quick.hintSftp")}
           </span>
           <span className="flex items-center gap-1">
             <Kbd>Esc</Kbd>

@@ -257,8 +257,11 @@ export type MonitorEvent = ({ type: "stats" } & ServerStats) | { type: "unsuppor
 
 export type ProcSort = "cpu" | "mem";
 
-/** 服务器状态面板在终端的右侧还是下方。 */
-export type MonitorPosition = "right" | "bottom";
+/** 终端侧栏在右侧还是下方。 */
+export type PanelPosition = "right" | "bottom";
+
+/** 终端侧栏显示服务器状态还是 SFTP。 */
+export type PanelMode = "monitor" | "sftp";
 
 // ---------- 远程桌面，见 src-tauri/src/service/rdp.rs ----------
 
@@ -277,11 +280,12 @@ export type RdpInput =
 
 // ---------- 工作区 ----------
 
-export type TabKind = "term" | "sftp" | "rdp";
+export type TabKind = "term" | "rdp";
 
 export interface WorkspaceTab {
   connId: string;
-  kind: TabKind;
+  /** sftp 是旧版本单独打开的 SFTP 标签，恢复时丢掉。 */
+  kind: TabKind | "sftp";
 }
 
 /** 上次打开的标签和最近打开的连接，见 src-tauri/src/service/workspace.rs。 */

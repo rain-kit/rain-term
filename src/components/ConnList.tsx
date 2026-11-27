@@ -16,8 +16,6 @@ interface Props {
   title: string;
   emptyDesc: string;
   onOpen: (c: ConnView) => void;
-  /** 右键菜单里紧跟“打开”的其他打开方式。 */
-  openItems?: (c: ConnView) => MenuItem[];
 }
 
 /** 按下后移动超过这么多像素才开始拖动，避免点击时误触。 */
@@ -54,7 +52,7 @@ function useCollapsed(key: string) {
 const WIDTH: SizeSpec = { key: "connList.width", initial: 0.25, min: 0.05, max: 0.6 };
 
 /** 左侧的连接列表：按分组显示，搜索，拖动排序，右键菜单。 */
-export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props) {
+export default function ConnList({ title, emptyDesc, onOpen }: Props) {
   const { t, tx } = useI18n();
   const toast = useToast();
   const { conns, loaded, reorder, move } = useConns();
@@ -195,8 +193,7 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
 
   const itemMenu = (c: ConnView): MenuItem[] => [
     { label: t("common.open"), icon: <Play size={14} />, onClick: () => onOpen(c) },
-    ...(openItems?.(c) ?? []),
-    { label: t("common.edit"), icon: <Pencil size={14} />, divider: !!openItems, onClick: () => setEditor({ open: true, conn: c }) },
+    { label: t("common.edit"), icon: <Pencil size={14} />, onClick: () => setEditor({ open: true, conn: c }) },
     { label: t("conn.duplicate"), icon: <CopyPlus size={14} />, onClick: () => run(() => connApi.duplicate(c.id), t("conn.duplicated")) },
     { label: t("conn.export"), icon: <Upload size={14} />, onClick: () => exportConns([c.id]) },
     { label: t("common.delete"), icon: <Trash2 size={14} />, danger: true, divider: true, onClick: () => askDelete(c) },

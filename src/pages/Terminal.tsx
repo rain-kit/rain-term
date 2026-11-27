@@ -6,6 +6,7 @@ import MonitorPanel from "../components/MonitorPanel";
 import QuickConnect from "../components/QuickConnect";
 import RdpView from "../components/RdpView";
 import SftpPanel from "../components/SftpPanel";
+import SidePanel from "../components/SidePanel";
 import TabBar, { type TabStatus } from "../components/TabBar";
 import TerminalView from "../components/TerminalView";
 import { Button, Confirm, cx, Empty, IconButton, type MenuItem } from "../components/ui";
@@ -13,15 +14,20 @@ import { events, workspaceApi } from "../lib/api";
 import { defaultTab, isIncognito } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns, useSettings } from "../lib/store";
-import type { ConnView, MonitorPosition, TabKind } from "../lib/types";
+import type { ConnView, PanelMode, PanelPosition, TabKind } from "../lib/types";
 import type { MessageKey } from "../locales/zh-CN";
 
 /** 与后端 service/workspace.rs 的 MAX_RECENT 一致。 */
 const MAX_RECENT = 20;
-/** 是否显示服务器状态，默认显示。 */
-const MONITOR_KEY = "monitor.visible";
-/** 服务器状态在右侧还是下方，默认右侧。 */
-const POSITION_KEY = "monitor.position";
+/** 侧栏显示服务器状态、SFTP 还是隐藏，默认显示服务器状态。 */
+const PANEL_KEY = "panel.mode";
+/** 侧栏在右侧还是下方，默认右侧。 */
+const POSITION_KEY = "panel.position";
+
+const loadPanel = (): PanelMode | null => {
+  const v = localStorage.getItem(PANEL_KEY);
+  return v === "none" ? null : v === "sftp" ? "sftp" : "monitor";
+};
 
 interface Tab {
   key: string;
@@ -32,15 +38,17 @@ interface Tab {
   /** 同一连接同一类标签的第几个，从 1 开始。 */
   seq: number;
   status: TabStatus;
-  /** SFTP 标签排队中和传输中的任务数。 */
+  /** 侧栏 SFTP 排队中和传输中的任务数。 */
   busy: number;
+  /** 侧栏里打开过 SFTP；之后一直保留到标签关闭，切换或隐藏侧栏不会中断传输。 */
+  sftp: boolean;
 }
 
-const needsConfirm = (x: Tab) => (x.kind === "sftp" ? x.busy > 0 : x.status === "connected");
+const needsConfirm = (x: Tab) => x.status === "connected" || x.busy > 0;
 
-const TAB_ICONS: Record<TabKind, LucideIcon> = { term: SquareTerminal, sftp: FolderOpen, rdp: Monitor };
+const TAB_ICONS: Record<TabKind, LucideIcon> = { term: SquareTerminal, rdp: Monitor };
 
-const CLOSE_TITLE: Record<TabKind, MessageKey> = { term: "terminal.closeTitle", sftp: "sftp.closeTitle", rdp: "rdp.closeTitle" };
+const CLOSE_TITLE: Record<TabKind, MessageKey> = { term: "terminal.closeTitle", rdp: "rdp.closeTitle" };
 
 function TabIcon({ kind, size, className }: { kind: TabKind; size: number; className?: string }) {
   const Icon = TAB_ICONS[kind];
@@ -65,18 +73,19 @@ export default function Terminal({
   const [closing, setClosing] = useState<Tab[]>([]);
   const [recent, setRecent] = useState<string[]>([]);
   const [restored, setRestored] = useState(false);
-  const [monitor, setMonitor] = useState(() => localStorage.getItem(MONITOR_KEY) !== "0");
+  const [panel, setPanel] = useState(loadPanel);
   const seq = useRef(0);
 
-  const [position, setPosition] = useState<MonitorPosition>(() =>
+  const [position, setPosition] = useState<PanelPosition>(() =>
     localStorage.getItem(POSITION_KEY) === "bottom" ? "bottom" : "right",
   );
 
-  const showMonitor = (v: boolean) => {
-    setMonitor(v);
-    localStorage.setItem(MONITOR_KEY, v ? "1" : "0");
+  const showPanel = (v: PanelMode | null) => {
+    setPanel(v);
+    localStorage.setItem(PANEL_KEY, v ?? "none");
   };
-  const moveMonitor = (p: MonitorPosition) => {
+  const togglePanel = (v: PanelMode) => showPanel(panel === v ? null : v);
+  const movePanel = (p: PanelPosition) => {
     setPosition(p);
     localStorage.setItem(POSITION_KEY, p);
   };
@@ -94,6 +103,8 @@ export default function Terminal({
     return tab.seq > 1 ? `${name} (${tab.seq})` : name;
   };
   const current = tabs.find((x) => x.key === active);
+  /** 侧栏跟随的终端标签；当前是远程桌面或未连接的标签时不显示侧栏。 */
+  const panelTab = current?.kind === "term" && current.status !== "idle" ? current : undefined;
 
   const nextSeq = (list: Tab[], connId: string, kind: TabKind) =>
     Math.max(0, ...list.filter((x) => x.connId === connId && x.kind === kind).map((x) => x.seq)) + 1;
@@ -114,9 +125,10 @@ export default function Terminal({
         let activeKey: string | undefined;
         ws.tabs.forEach((w, i) => {
           const c = byId.get(w.connId);
-          if (!c) return;
+          if (!c || w.kind === "sftp") return;
           const key = `t${++seq.current}`;
-          list.push({ key, kind: w.kind, connId: c.id, name: c.name, seq: nextSeq(list, c.id, w.kind), status: "idle", busy: 0 });
+          const kind = w.kind;
+          list.push({ key, kind, connId: c.id, name: c.name, seq: nextSeq(list, c.id, kind), status: "idle", busy: 0, sftp: false });
           if (i === ws.active) activeKey = key;
         });
         setRecent(ws.recent);
@@ -141,7 +153,7 @@ export default function Terminal({
 
   const open = (c: { id: string; name: string }, kind: TabKind) => {
     const key = `t${++seq.current}`;
-    setTabs((list) => [...list, { key, kind, connId: c.id, name: c.name, seq: nextSeq(list, c.id, kind), status: "connecting", busy: 0 }]);
+    setTabs((list) => [...list, { key, kind, connId: c.id, name: c.name, seq: nextSeq(list, c.id, kind), status: "connecting", busy: 0, sftp: false }]);
     setActive(key);
     touch(c.id);
   };
@@ -178,10 +190,15 @@ export default function Terminal({
     else remove(keys);
   };
 
-  const update = (key: string, patch: Partial<Pick<Tab, "status" | "busy">>) =>
+  const update = (key: string, patch: Partial<Pick<Tab, "status" | "busy" | "sftp">>) =>
     setTabs((list) =>
       list.map((x) => (x.key === key && Object.entries(patch).some(([k, v]) => x[k as keyof Tab] !== v) ? { ...x, ...patch } : x)),
     );
+
+  // 终端连上后才打开侧栏的 SFTP，复用终端的连接，不会单独再认证一次。
+  useEffect(() => {
+    if (panel === "sftp" && panelTab?.status === "connected" && !panelTab.sftp) update(panelTab.key, { sftp: true });
+  }, [panel, panelTab?.key, panelTab?.status]);
 
   const reorder = (keys: string[]) =>
     setTabs((list) => {
@@ -225,7 +242,6 @@ export default function Terminal({
             title={t("terminal.connections")}
             emptyDesc={t("conn.emptyDesc.terminal")}
             onOpen={(c) => open(c, defaultTab(c))}
-            openItems={(c) => (c.kind === "ssh" ? [{ label: t("sftp.open"), icon: <FolderOpen size={14} />, onClick: () => open(c, "sftp") }] : [])}
           />
         }
         icon={SquareTerminal}
@@ -252,17 +268,18 @@ export default function Terminal({
                 current?.kind === "term" && (
                   <>
                     <IconButton
-                      label={t(monitor ? "monitor.hide" : "monitor.show")}
+                      label={t(panel === "monitor" ? "monitor.hide" : "monitor.show")}
                       size="sm"
-                      className={cx(monitor && "bg-accent/12 text-accent")}
-                      onClick={() => showMonitor(!monitor)}
+                      className={cx(panel === "monitor" && "bg-accent/12 text-accent")}
+                      onClick={() => togglePanel("monitor")}
                     >
                       <Activity size={15} />
                     </IconButton>
                     <IconButton
-                      label={t("sftp.openForTab")}
+                      label={t(panel === "sftp" ? "sftp.hide" : "sftp.show")}
                       size="sm"
-                      onClick={() => open({ id: current.connId, name: names.get(current.connId) ?? current.name }, "sftp")}
+                      className={cx(panel === "sftp" && "bg-accent/12 text-accent")}
+                      onClick={() => togglePanel("sftp")}
                     >
                       <FolderOpen size={15} />
                     </IconButton>
@@ -296,7 +313,7 @@ export default function Terminal({
                         incognito={incognito.has(x.connId)}
                         onStatus={(s) => update(x.key, { status: s })}
                       />
-                    ) : x.kind === "rdp" ? (
+                    ) : (
                       <RdpView
                         connId={x.connId}
                         name={title(x)}
@@ -305,28 +322,36 @@ export default function Terminal({
                         clipboard={rdpOf(x.connId)?.clipboard ?? true}
                         onStatus={(s) => update(x.key, { status: s })}
                       />
-                    ) : (
-                      <SftpPanel
-                        connId={x.connId}
-                        name={title(x)}
-                        active={x.key === active}
-                        onStatus={(s) => update(x.key, { status: s })}
-                        onBusy={(n) => update(x.key, { busy: n })}
-                      />
                     )}
                   </div>
                 ))}
               </div>
-              {monitor && current?.kind === "term" && current.status !== "idle" && (
-                <MonitorPanel
-                  key={current.key}
-                  connId={current.connId}
-                  connected={current.status === "connected"}
-                  position={position}
-                  onPosition={moveMonitor}
-                  onClose={() => showMonitor(false)}
-                />
-              )}
+              <SidePanel
+                mode={panel ?? "monitor"}
+                visible={!!panel && !!panelTab}
+                position={position}
+                onPosition={movePanel}
+                onClose={() => showPanel(null)}
+              >
+                {panel === "monitor" && panelTab && (
+                  <MonitorPanel key={panelTab.key} connId={panelTab.connId} connected={panelTab.status === "connected"} />
+                )}
+                {panel === "sftp" && panelTab && !panelTab.sftp && (
+                  <div className="px-4 py-6 text-center text-xs text-muted">{t("sftp.waiting")}</div>
+                )}
+                {tabs
+                  .filter((x) => x.sftp)
+                  .map((x) => (
+                    <div key={x.key} className={cx("flex min-h-0 flex-1 flex-col", (panel !== "sftp" || x.key !== panelTab?.key) && "hidden")}>
+                      <SftpPanel
+                        connId={x.connId}
+                        name={title(x)}
+                        active={panel === "sftp" && x.key === panelTab?.key}
+                        onBusy={(n) => update(x.key, { busy: n })}
+                      />
+                    </div>
+                  ))}
+              </SidePanel>
             </div>
             <Confirm
               open={closing.length > 0}
@@ -334,8 +359,8 @@ export default function Terminal({
               message={
                 !closeOne
                   ? t("terminal.closeManyMessage", { count: closing.length, busy: closing.filter(needsConfirm).length })
-                  : closeOne.kind === "sftp"
-                    ? tx("sftp.closeMessage", { name: closeName, count: String(closeOne.busy) })
+                  : closeOne.busy > 0
+                    ? tx("terminal.closeBusyMessage", { name: closeName, count: String(closeOne.busy) })
                     : tx(closeOne.kind === "rdp" ? "rdp.closeMessage" : "terminal.closeMessage", { name: closeName })
               }
               confirmText={t("common.close")}
@@ -350,8 +375,8 @@ export default function Terminal({
         open={quickConnect}
         recent={recent}
         onClose={onQuickConnectClose}
-        onPick={(c, kind) => {
-          open(c, kind);
+        onPick={(c) => {
+          open(c, defaultTab(c));
           onShow();
         }}
       />

@@ -12,6 +12,7 @@ import {
   FolderPlus,
   FolderSymlink,
   House,
+  LoaderCircle,
   Pencil,
   RotateCw,
   Trash2,
@@ -24,7 +25,6 @@ import { formatBytes, formatTime } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useToast } from "../lib/store";
 import type { FileEntry, I18nMsg, SftpEvent, Transfer } from "../lib/types";
-import { ConnStatus } from "./StatusBar";
 import type { TabStatus } from "./TabBar";
 import { Button, Confirm, ContextMenu, cx, Dialog, IconButton, Input, type MenuItem } from "./ui";
 
@@ -44,7 +44,11 @@ interface Task extends Transfer {
 const SPEED_WINDOW = 1000;
 const REFRESH_DELAY = 300;
 const DOWNLOAD_DIR_KEY = "sftp.downloadDir";
-const COLS = "grid grid-cols-[minmax(0,1fr)_6rem_9rem_6.5rem] gap-3";
+/** 侧栏窄时只显示名称和大小，宽一些再显示修改时间和权限。 */
+const COLS =
+  "grid grid-cols-[minmax(0,1fr)_5.5rem] gap-3 @md:grid-cols-[minmax(0,1fr)_5.5rem_9rem] @xl:grid-cols-[minmax(0,1fr)_5.5rem_9rem_6.5rem]";
+const MTIME_COL = "hidden @md:block";
+const PERM_COL = "hidden @xl:block";
 /** 列表只渲染可见的行；行高、上边距要和行的 h-7、列表的 py-1 一致。 */
 const ROW_H = 28;
 const LIST_PAD = 4;
@@ -88,18 +92,17 @@ function EntryIcon({ e }: { e: FileEntry }) {
   return <File size={15} className="shrink-0 text-muted" />;
 }
 
-/** 一个 SFTP 标签：浏览远程目录、管理文件、上传下载，断开后可以重新连接。 */
+/** 终端侧栏里的 SFTP：浏览远程目录、管理文件、上传下载，断开后可以重新连接。 */
 export default function SftpPanel({
   connId,
   name,
   active,
-  onStatus,
   onBusy,
 }: {
   connId: string;
   name: string;
+  /** 正在显示；只有这时响应从系统拖入的文件。 */
   active: boolean;
-  onStatus: (s: TabStatus) => void;
   /** 排队中和传输中的任务数。 */
   onBusy: (n: number) => void;
 }) {
@@ -134,8 +137,6 @@ export default function SftpPanel({
   const listEl = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ top: 0, height: 0 });
   const nameInput = useRef<HTMLInputElement>(null);
-  const onStatusRef = useRef(onStatus);
-  onStatusRef.current = onStatus;
   const onBusyRef = useRef(onBusy);
   onBusyRef.current = onBusy;
 
@@ -143,7 +144,6 @@ export default function SftpPanel({
   const selected = entries.filter((e) => sel.has(e.path));
   const busy = tasks.filter((x) => !finished(x.state)).length;
 
-  useEffect(() => onStatusRef.current(status.s), [status.s]);
   useEffect(() => onBusyRef.current(busy), [busy]);
 
   useEffect(() => {
@@ -327,7 +327,7 @@ export default function SftpPanel({
     el.setSelectionRange(0, dot > 0 ? dot : naming.value.length);
   }, [naming !== null]);
 
-  // 从系统拖入文件上传到当前目录；只有当前标签响应。
+  // 从系统拖入文件上传到当前目录；只有正在显示的 SFTP 响应。
   useEffect(() => {
     if (!active || !isTauri()) return;
     const inside = ({ x, y }: { x: number; y: number }) => {
@@ -426,7 +426,7 @@ export default function SftpPanel({
   const last = Math.min(entries.length, Math.ceil((view.top + view.height) / ROW_H) + OVERSCAN);
 
   return (
-    <div ref={box} className="relative flex min-h-0 flex-1 flex-col bg-canvas">
+    <div ref={box} className="@container relative flex min-h-0 flex-1 flex-col bg-canvas">
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line px-2">
         <IconButton label={t("sftp.up")} size="sm" disabled={!connected || cwd === "/"} onClick={up}>
           <ArrowUp size={16} />
@@ -439,7 +439,7 @@ export default function SftpPanel({
         </IconButton>
         <Input
           mono
-          className="h-7.5 flex-1"
+          className="h-7.5 min-w-0 flex-1"
           aria-label={t("sftp.path")}
           disabled={!connected}
           value={pathInput}
@@ -461,11 +461,28 @@ export default function SftpPanel({
         </IconButton>
       </div>
 
+      {status.s === "connecting" && (
+        <div className="flex h-8 shrink-0 items-center gap-2 border-b border-line px-3 text-xs text-muted">
+          <LoaderCircle size={13} className="shrink-0 animate-spin" />
+          <span className="truncate">{t("sftp.connecting", { name })}</span>
+        </div>
+      )}
+      {status.s === "closed" && (
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3 text-xs">
+          <span className="min-w-0 flex-1 truncate text-red-600 dark:text-red-400" title={status.message}>
+            {status.message ?? t("terminal.status.closed")}
+          </span>
+          <Button size="sm" onClick={() => connect(cwdRef.current || undefined)}>
+            {t("terminal.reconnect")}
+          </Button>
+        </div>
+      )}
+
       <div className={cx(COLS, "shrink-0 border-b border-line px-3 py-1.5 text-xs font-medium text-muted")}>
         <span>{t("sftp.col.name")}</span>
         <span className="text-right">{t("sftp.col.size")}</span>
-        <span>{t("sftp.col.mtime")}</span>
-        <span>{t("sftp.col.perm")}</span>
+        <span className={MTIME_COL}>{t("sftp.col.mtime")}</span>
+        <span className={PERM_COL}>{t("sftp.col.perm")}</span>
       </div>
       <div
         ref={listEl}
@@ -510,8 +527,8 @@ export default function SftpPanel({
                   <span className="truncate">{e.name}</span>
                 </span>
                 <span className="text-right text-xs text-muted tabular-nums">{isDir(e) ? "" : formatBytes(e.size)}</span>
-                <span className="text-xs text-muted tabular-nums">{e.mtime !== undefined ? formatTime(e.mtime) : ""}</span>
-                <span className="font-mono text-xs text-muted">{e.perm}</span>
+                <span className={cx(MTIME_COL, "text-xs text-muted tabular-nums")}>{e.mtime !== undefined ? formatTime(e.mtime) : ""}</span>
+                <span className={cx(PERM_COL, "font-mono text-xs text-muted")}>{e.perm}</span>
               </div>
             );
           })}
@@ -544,16 +561,6 @@ export default function SftpPanel({
             {t("sftp.dropHint", { path: cwd })}
           </div>
         </div>
-      )}
-
-      {active && (
-        <ConnStatus
-          status={status.s}
-          name={name}
-          connectingText={t("sftp.connecting", { name })}
-          message={status.message}
-          onReconnect={() => connect(cwdRef.current || undefined)}
-        />
       )}
 
       <ContextMenu at={menu?.at ?? null} items={menu?.items ?? []} onClose={() => setMenu(null)} />
