@@ -8,6 +8,7 @@ pub mod error;
 pub mod events;
 pub mod logging;
 pub mod model;
+pub mod os_auth;
 pub mod secrets;
 pub mod service;
 pub mod store;
@@ -49,6 +50,7 @@ pub fn run() {
             commands::conn::conn_delete,
             commands::conn::conn_reorder,
             commands::conn::conn_test,
+            commands::conn::conn_reveal_password,
             commands::conn::conn_export,
             commands::conn::conn_import,
             commands::conn::conn_import_dir,

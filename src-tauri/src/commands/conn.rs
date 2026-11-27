@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::{AppHandle, State, Wry};
+use tauri::{AppHandle, State, WebviewWindow, Wry};
 use tauri_plugin_dialog::{DialogExt, FileDialogBuilder};
 
 use crate::app::AppState;
@@ -44,6 +44,26 @@ pub async fn conn_reorder(s: S<'_>, ids: Vec<String>) -> ApiResult<()> {
 #[tauri::command]
 pub async fn conn_test(s: S<'_>, req: SaveConnReq) -> ApiResult<TestResult> {
     s.conns.test(req).await
+}
+
+/// 验证电脑密码后返回连接保存的密码，取消验证时返回 None。
+#[tauri::command]
+pub async fn conn_reveal_password(
+    window: WebviewWindow,
+    s: S<'_>,
+    id: String,
+) -> ApiResult<Option<String>> {
+    s.conns.reveal_password(&id, window_handle(&window)).await
+}
+
+#[cfg(windows)]
+fn window_handle(window: &WebviewWindow) -> Option<isize> {
+    window.hwnd().ok().map(|h| h.0 as isize)
+}
+
+#[cfg(not(windows))]
+fn window_handle(_window: &WebviewWindow) -> Option<isize> {
+    None
 }
 
 #[derive(Serialize)]

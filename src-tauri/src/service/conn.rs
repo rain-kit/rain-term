@@ -18,12 +18,13 @@ use crate::error::{self, ApiError, ApiResult};
 use crate::events::{self, EventSink};
 use crate::i18n::pick;
 use crate::model::{
-    ConnParams, ConnView, Connection, DEFAULT_RDP_HEIGHT, DEFAULT_RDP_WIDTH, RdpParams,
+    AuthType, ConnParams, ConnView, Connection, DEFAULT_RDP_HEIGHT, DEFAULT_RDP_WIDTH, RdpParams,
     SaveConnReq, SshParams, TestResult, validate_refs,
 };
 use crate::secrets::{self, Secrets};
 use crate::store::{ConnStore, StoreError};
 use crate::util::new_id;
+use crate::os_auth;
 
 impl From<StoreError> for ApiError {
     fn from(e: StoreError) -> Self {
@@ -104,6 +105,34 @@ impl ConnService {
             .fill(&mut c)
             .map_err(|e| error::SECRET_READ_FAILED.cause(e))?;
         Ok(c)
+    }
+
+    /// 验证电脑密码后读取连接保存的密码；用户取消验证时返回 None。
+    /// `parent` 是验证对话框所属窗口的句柄。
+    pub async fn reveal_password(&self, id: &str, parent: Option<isize>) -> ApiResult<Option<String>> {
+        let c = self.store.get(id)?;
+        let password_auth = match &c.params {
+            ConnParams::Ssh(p) => p.auth == AuthType::Password,
+            ConnParams::Rdp(_) => true,
+        };
+        if !password_auth || !self.secrets.has(id, secrets::PASSWORD) {
+            return Err(error::CONN_INVALID.msg(msg!("err.conn.noPassword", "这个连接没有保存密码")));
+        }
+        let passed = tokio::task::spawn_blocking(move || os_auth::verify(parent))
+            .await
+            .map_err(|e| error::SERVICE_ERROR.cause(e))?
+            .map_err(|e| {
+                warn!(conn = %c.name, err = %e.text(), "验证电脑密码失败");
+                error::OS_AUTH_FAILED.msg(e)
+            })?;
+        if !passed {
+            return Ok(None);
+        }
+        info!(conn = %c.name, "已验证电脑密码，查看保存的密码");
+        self.secrets
+            .get(id, secrets::PASSWORD)
+            .map(Some)
+            .map_err(|e| error::SECRET_READ_FAILED.cause(e))
     }
 
     fn view(&self, mut c: Connection) -> ConnView {
@@ -673,6 +702,32 @@ mod tests {
                 .unwrap()
                 .has_password
         );
+    }
+
+    #[tokio::test]
+    async fn reveal_requires_saved_password() {
+        let f = fixture();
+        let mut key = ssh("key", "");
+        let p = ssh_of_mut(&mut key);
+        p.auth = AuthType::Key;
+        p.key_path = "~/.ssh/id_ed25519".into();
+        let key = create(&f.svc, key).conn;
+        let cleared = create(&f.svc, ssh("cleared", "")).conn;
+        f.svc
+            .save(SaveConnReq {
+                conn: cleared.clone(),
+                clear_password: true,
+                ..Default::default()
+            })
+            .unwrap();
+        for id in [&key.id, &cleared.id] {
+            let err = f.svc.reveal_password(id, None).await.unwrap_err();
+            assert_eq!(
+                (err.code, err.msg.i18n),
+                (error::CONN_INVALID.0, "err.conn.noPassword"),
+                "没有可查看的密码时不弹出电脑密码验证"
+            );
+        }
     }
 
     #[test]

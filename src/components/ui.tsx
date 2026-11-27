@@ -147,9 +147,11 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   );
 });
 
-export function PasswordInput(props: Omit<InputProps, "type" | "suffix">) {
+/** revealed 变化时跟着切换明文或密文显示。 */
+export function PasswordInput({ revealed = false, ...props }: Omit<InputProps, "type" | "suffix"> & { revealed?: boolean }) {
   const { t } = useI18n();
-  const [show, setShow] = useState(false);
+  const [show, setShow] = useState(revealed);
+  useEffect(() => setShow(revealed), [revealed]);
   return (
     <Input
       {...props}

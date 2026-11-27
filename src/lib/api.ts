@@ -56,6 +56,8 @@ export const connApi = {
   reorder: (ids: string[]) => invoke<void>("conn_reorder", { ids }),
   /** 用编辑器里尚未保存的内容测试连接。 */
   test: (req: SaveConnReq) => invoke<TestResult>("conn_test", { req }),
+  /** 验证电脑密码后返回保存的密码；取消验证时返回 null。 */
+  revealPassword: (id: string) => invoke<string | null>("conn_reveal_password", { id }),
   /** 弹出保存对话框导出，ids 为空时导出全部；取消时返回 null。 */
   exportTo: (ids: string[] = []) => invoke<ExportResult | null>("conn_export", { ids }),
   /** 弹出文件选择框导入本应用导出的文件，返回导入的数量；取消时返回 null。 */

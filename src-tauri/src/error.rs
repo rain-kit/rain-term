@@ -79,6 +79,7 @@ pub const OPEN_URL_FAILED: Code = Code(4, "err.openUrlFailed", "打开链接失�
 pub const SECRET_STORE_FAILED: Code = Code(5, "err.secretStoreFailed", "保存密码到系统凭据库失败");
 pub const SECRET_READ_FAILED: Code = Code(6, "err.secretReadFailed", "读取系统凭据库失败");
 pub const LOG_READ_FAILED: Code = Code(7, "err.logReadFailed", "读取日志失败");
+pub const OS_AUTH_FAILED: Code = Code(8, "err.osAuthFailed", "验证电脑密码失败");
 
 // -------------------- 连接 100000 -------------------- //
 pub const CONN_NOT_FOUND: Code = Code(100001, "err.connNotFound", "连接不存在");

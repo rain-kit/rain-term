@@ -149,19 +149,26 @@ function SecretField({
   cleared,
   value,
   hint,
+  revealing,
+  revealed,
   onChange,
   onClear,
+  onReveal,
 }: {
   label: string;
   saved: boolean;
   cleared: boolean;
   value: string;
   hint?: string;
+  revealing?: boolean;
+  revealed?: boolean;
   onChange: (v: string) => void;
   onClear: (v: boolean) => void;
+  /** 不传时不能查看保存的密码。 */
+  onReveal?: () => void;
 }) {
   const { t } = useI18n();
-  const link = "ml-1.5 text-accent hover:underline";
+  const link = "ml-1.5 text-accent hover:underline disabled:opacity-50 disabled:no-underline";
   const savedHint = saved ? (
     cleared ? (
       <>
@@ -173,6 +180,11 @@ function SecretField({
     ) : (
       <>
         {t("editor.secretSaved")}
+        {onReveal && !value && (
+          <button type="button" className={link} disabled={revealing} onClick={onReveal}>
+            {t(revealing ? "editor.secretRevealing" : "editor.secretReveal")}
+          </button>
+        )}
         <button type="button" className={link} onClick={() => onClear(true)}>
           {t("editor.secretClear")}
         </button>
@@ -182,6 +194,7 @@ function SecretField({
   return (
     <Field label={label} hint={savedHint ?? hint}>
       <PasswordInput
+        revealed={revealed}
         value={value}
         placeholder={saved && !cleared ? "••••••••" : undefined}
         onChange={(e) => {
@@ -213,6 +226,8 @@ export default function ConnEditor({
   const [errors, setErrors] = useState<Errors>({});
   const [clear, setClear] = useState({ password: false, keyPassphrase: false });
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [revealed, setRevealed] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -221,6 +236,7 @@ export default function ConnEditor({
     setForm(next);
     setErrors({});
     setClear({ password: false, keyPassphrase: false });
+    setRevealed(false);
   }, [open, conn, group]);
 
   const f = form;
@@ -258,6 +274,24 @@ export default function ConnEditor({
       if (p) set("keyPath", p);
     } catch (e) {
       toast.error(e);
+    }
+  };
+
+  // 只有按密码认证保存的连接才能查看密码，查看前要先通过电脑密码验证。
+  const canReveal = !!conn?.hasPassword && (conn.kind === "rdp" || conn.auth === "password");
+  const reveal = async () => {
+    if (!conn) return;
+    setRevealing(true);
+    try {
+      const password = await connApi.revealPassword(conn.id);
+      if (password !== null) {
+        set("password", password);
+        setRevealed(true);
+      }
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setRevealing(false);
     }
   };
 
@@ -372,8 +406,11 @@ export default function ConnEditor({
               saved={!!conn?.hasPassword}
               cleared={clear.password}
               value={f.password}
+              revealing={revealing}
+              revealed={revealed}
               onChange={(v) => set("password", v)}
               onClear={(v) => setClear((c) => ({ ...c, password: v }))}
+              onReveal={canReveal ? reveal : undefined}
             />
           </>
         ) : (
@@ -400,8 +437,11 @@ export default function ConnEditor({
                 saved={!!conn?.hasPassword}
                 cleared={clear.password}
                 value={f.password}
+                revealing={revealing}
+                revealed={revealed}
                 onChange={(v) => set("password", v)}
                 onClear={(v) => setClear((c) => ({ ...c, password: v }))}
+                onReveal={canReveal ? reveal : undefined}
               />
             )}
             {f.auth === "key" && (
