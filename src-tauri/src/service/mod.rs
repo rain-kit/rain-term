@@ -3,6 +3,7 @@ mod finalshell;
 pub mod hostkey;
 mod mobaxterm;
 pub mod pool;
+pub mod rdp;
 pub mod session;
 pub mod sftp;
 pub mod workspace;

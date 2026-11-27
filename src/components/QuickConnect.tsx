@@ -1,7 +1,7 @@
 import { History, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { colorClass, connAddress } from "../lib/format";
+import { colorClass, connAddress, defaultTab, isIncognito } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns } from "../lib/store";
 import type { ConnView, TabKind } from "../lib/types";
@@ -11,7 +11,7 @@ const Kbd = ({ children }: { children: ReactNode }) => (
   <kbd className="rounded border border-line bg-subtle px-1 py-px font-sans text-[10px] text-ink">{children}</kbd>
 );
 
-/** 快速连接：搜索全部连接，最近打开的排在前面；Enter 打开终端，Shift+Enter 打开 SFTP。 */
+/** 快速连接：搜索全部连接，最近打开的排在前面；Enter 打开终端或远程桌面，Shift+Enter 打开 SFTP。 */
 export default function QuickConnect({
   open,
   recent,
@@ -57,7 +57,7 @@ export default function QuickConnect({
   const pick = (c: ConnView | undefined, sftp: boolean) => {
     if (!c) return;
     onClose();
-    onPick(c, sftp ? "sftp" : "term");
+    onPick(c, sftp && c.kind === "ssh" ? "sftp" : defaultTab(c));
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -114,7 +114,7 @@ export default function QuickConnect({
                     <div className="flex items-center gap-2">
                       <span className={cx("truncate text-[13px] font-medium", c.production && "text-red-600 dark:text-red-400")}>{c.name}</span>
                       {c.production && <ProdBadge />}
-                      {c.incognito && <IncognitoBadge />}
+                      {isIncognito(c) && <IncognitoBadge />}
                       {c.group && <span className="shrink-0 rounded bg-subtle px-1.5 text-[11px] text-muted">{c.group}</span>}
                     </div>
                     <div className="truncate font-mono text-[11px] text-muted">{connAddress(c)}</div>
@@ -137,7 +137,7 @@ export default function QuickConnect({
           </span>
           <span className="flex items-center gap-1">
             <Kbd>Enter</Kbd>
-            {t("quick.hintTerm")}
+            {t("quick.hintOpen")}
           </span>
           <span className="flex items-center gap-1">
             <Kbd>Shift+Enter</Kbd>

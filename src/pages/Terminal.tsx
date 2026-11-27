@@ -1,16 +1,19 @@
-import { CopyPlus, FolderOpen, PlugZap, SquareTerminal, X } from "lucide-react";
+import { CopyPlus, FolderOpen, Monitor, PlugZap, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnList from "../components/ConnList";
 import ModeLayout from "../components/ModeLayout";
 import QuickConnect from "../components/QuickConnect";
+import RdpView from "../components/RdpView";
 import SftpPanel from "../components/SftpPanel";
 import TabBar, { type TabStatus } from "../components/TabBar";
 import TerminalView from "../components/TerminalView";
 import { Button, Confirm, cx, Empty, IconButton, type MenuItem } from "../components/ui";
 import { events, workspaceApi } from "../lib/api";
+import { defaultTab, isIncognito } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns, useSettings } from "../lib/store";
-import type { TabKind } from "../lib/types";
+import type { ConnView, TabKind } from "../lib/types";
+import type { MessageKey } from "../locales/zh-CN";
 
 /** 与后端 service/workspace.rs 的 MAX_RECENT 一致。 */
 const MAX_RECENT = 20;
@@ -28,7 +31,16 @@ interface Tab {
   busy: number;
 }
 
-const needsConfirm = (x: Tab) => (x.kind === "term" ? x.status === "connected" : x.busy > 0);
+const needsConfirm = (x: Tab) => (x.kind === "sftp" ? x.busy > 0 : x.status === "connected");
+
+const TAB_ICONS: Record<TabKind, LucideIcon> = { term: SquareTerminal, sftp: FolderOpen, rdp: Monitor };
+
+const CLOSE_TITLE: Record<TabKind, MessageKey> = { term: "terminal.closeTitle", sftp: "sftp.closeTitle", rdp: "rdp.closeTitle" };
+
+function TabIcon({ kind, size, className }: { kind: TabKind; size: number; className?: string }) {
+  const Icon = TAB_ICONS[kind];
+  return <Icon size={size} className={className} />;
+}
 
 export default function Terminal({
   quickConnect,
@@ -52,7 +64,12 @@ export default function Terminal({
 
   const names = useMemo(() => new Map(conns.map((c) => [c.id, c.name])), [conns]);
   const production = useMemo(() => new Set(conns.filter((c) => c.production).map((c) => c.id)), [conns]);
-  const incognito = useMemo(() => new Set(conns.filter((c) => c.incognito).map((c) => c.id)), [conns]);
+  const incognito = useMemo(() => new Set(conns.filter(isIncognito).map((c) => c.id)), [conns]);
+  const connById = useMemo(() => new Map<string, ConnView>(conns.map((c) => [c.id, c])), [conns]);
+  const rdpOf = (id: string) => {
+    const c = connById.get(id);
+    return c?.kind === "rdp" ? c : undefined;
+  };
   const title = (tab: Tab) => {
     const name = names.get(tab.connId) ?? tab.name;
     return tab.seq > 1 ? `${name} (${tab.seq})` : name;
@@ -103,7 +120,7 @@ export default function Terminal({
     return () => clearTimeout(timer);
   }, [restored, layout, active]);
 
-  const open = (c: { id: string; name: string }, kind: TabKind = "term") => {
+  const open = (c: { id: string; name: string }, kind: TabKind) => {
     const key = `t${++seq.current}`;
     setTabs((list) => [...list, { key, kind, connId: c.id, name: c.name, seq: nextSeq(list, c.id, kind), status: "connecting", busy: 0 }]);
     setActive(key);
@@ -115,7 +132,7 @@ export default function Terminal({
   trayOpen.current = (id) => {
     const c = conns.find((x) => x.id === id);
     if (!c) return;
-    open(c);
+    open(c, defaultTab(c));
     onShow();
   };
   useEffect(() => events.onTrayOpen((id) => trayOpen.current(id)), []);
@@ -188,8 +205,8 @@ export default function Terminal({
           <ConnList
             title={t("terminal.connections")}
             emptyDesc={t("conn.emptyDesc.terminal")}
-            onOpen={(c) => open(c)}
-            openItems={(c) => [{ label: t("sftp.open"), icon: <FolderOpen size={14} />, onClick: () => open(c, "sftp") }]}
+            onOpen={(c) => open(c, defaultTab(c))}
+            openItems={(c) => (c.kind === "ssh" ? [{ label: t("sftp.open"), icon: <FolderOpen size={14} />, onClick: () => open(c, "sftp") }] : [])}
           />
         }
         icon={SquareTerminal}
@@ -205,7 +222,7 @@ export default function Terminal({
                 status: x.status,
                 danger: production.has(x.connId),
                 incognito: incognito.has(x.connId),
-                icon: x.kind === "sftp" ? <FolderOpen size={13} className="shrink-0 text-muted" /> : undefined,
+                icon: x.kind === "term" ? undefined : <TabIcon kind={x.kind} size={13} className="shrink-0 text-muted" />,
               }))}
               active={active}
               onSelect={setActive}
@@ -229,7 +246,7 @@ export default function Terminal({
                 {x.status === "idle" ? (
                   <div className="flex flex-1 flex-col justify-center overflow-y-auto px-6">
                     <Empty
-                      icon={x.kind === "sftp" ? <FolderOpen size={22} /> : <SquareTerminal size={22} />}
+                      icon={<TabIcon kind={x.kind} size={22} />}
                       title={title(x)}
                       desc={t("terminal.idleDesc")}
                       action={
@@ -248,6 +265,15 @@ export default function Terminal({
                     incognito={incognito.has(x.connId)}
                     onStatus={(s) => update(x.key, { status: s })}
                   />
+                ) : x.kind === "rdp" ? (
+                  <RdpView
+                    connId={x.connId}
+                    name={title(x)}
+                    active={x.key === active}
+                    fit={rdpOf(x.connId)?.resolution !== "fixed"}
+                    clipboard={rdpOf(x.connId)?.clipboard ?? true}
+                    onStatus={(s) => update(x.key, { status: s })}
+                  />
                 ) : (
                   <SftpPanel
                     connId={x.connId}
@@ -261,13 +287,13 @@ export default function Terminal({
             ))}
             <Confirm
               open={closing.length > 0}
-              title={t(closeOne ? (closeOne.kind === "sftp" ? "sftp.closeTitle" : "terminal.closeTitle") : "terminal.closeManyTitle")}
+              title={t(closeOne ? CLOSE_TITLE[closeOne.kind] : "terminal.closeManyTitle")}
               message={
                 !closeOne
                   ? t("terminal.closeManyMessage", { count: closing.length, busy: closing.filter(needsConfirm).length })
                   : closeOne.kind === "sftp"
                     ? tx("sftp.closeMessage", { name: closeName, count: String(closeOne.busy) })
-                    : tx("terminal.closeMessage", { name: closeName })
+                    : tx(closeOne.kind === "rdp" ? "rdp.closeMessage" : "terminal.closeMessage", { name: closeName })
               }
               confirmText={t("common.close")}
               danger

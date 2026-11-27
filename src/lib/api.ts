@@ -7,6 +7,8 @@ import type {
   HostKeyPrompt,
   I18nMsg,
   LogEntry,
+  RdpInput,
+  RdpNotice,
   SaveConnReq,
   Listing,
   SessionClosed,
@@ -118,6 +120,40 @@ export const sftpApi = {
   pickUploadFiles: () => invoke<string[]>("pick_upload_files"),
   /** 取消时返回空字符串。 */
   pickDownloadDir: (defaultDir?: string) => invoke<string>("pick_download_dir", { defaultDir }),
+};
+
+/** 远程桌面，见 src-tauri/src/service/rdp.rs。 */
+export const rdpApi = {
+  /**
+   * 连接成功后返回会话 ID。画面和鼠标指针是二进制消息（格式见 src-tauri/src/core/rdp/session.rs），
+   * 其余是 JSON 通知。每画完一条画面消息要调用 ack，否则后端发出两条未确认的画面后会暂停。
+   */
+  open: (
+    connId: string,
+    width: number,
+    height: number,
+    scale: number,
+    onData: (d: Uint8Array<ArrayBuffer>) => void,
+    onNotice: (n: RdpNotice) => void,
+  ) => {
+    const ch = new Channel<ArrayBuffer | number[] | RdpNotice>();
+    ch.onmessage = (m) => {
+      if (m instanceof ArrayBuffer) onData(new Uint8Array(m));
+      else if (Array.isArray(m)) onData(Uint8Array.from(m));
+      else onNotice(m);
+    };
+    return invoke<string>("rdp_open", { connId, width, height, scale, onEvent: ch });
+  },
+  input: (id: string, events: RdpInput[]) => invoke<void>("rdp_input", { id, events }),
+  ctrlAltDel: (id: string) => invoke<void>("rdp_ctrl_alt_del", { id }),
+  /** 松开所有按下的键和鼠标按钮，窗口失去焦点时调用。 */
+  releaseAll: (id: string) => invoke<void>("rdp_release_all", { id }),
+  /** 分辨率跟随窗口时请求新的分辨率，服务器不支持时不变。 */
+  resize: (id: string, width: number, height: number, scale: number) => invoke<void>("rdp_resize", { id, width, height, scale }),
+  /** 本机剪贴板的文本，远程粘贴时使用。 */
+  clipboard: (id: string, text: string) => invoke<void>("rdp_clipboard", { id, text }),
+  ack: (id: string) => invoke<void>("rdp_ack", { id }),
+  close: (id: string) => invoke<void>("rdp_close", { id }),
 };
 
 export const workspaceApi = {

@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rain_dial::core::rdp::cert::CertStore;
 use rain_dial::core::ssh::known_hosts::HostKeyStore;
 use rain_dial::core::ssh::shell::{ExitStatus, PtySize, ShellEvent, ShellReader};
 use rain_dial::core::ssh::{self, Connected, DialOptions, SshError, SshTarget, TrustFn};
@@ -362,6 +363,7 @@ async fn conn_test_asks_host_key() {
     let sink = Arc::new(Recorder::default());
     let host_keys = HostKeyService::new(
         HostKeyStore::new(dir.join("known_hosts"), vec![]),
+        CertStore::new(dir.join("rdp_known_hosts")),
         sink.clone(),
     );
     let svc = Arc::new(ConnService::new(

@@ -65,6 +65,12 @@ impl From<crate::core::ssh::SshError> for ApiError {
     }
 }
 
+impl From<crate::core::rdp::RdpError> for ApiError {
+    fn from(e: crate::core::rdp::RdpError) -> Self {
+        RDP_CONNECT_FAILED.msg(e.msg())
+    }
+}
+
 // -------------------- 系统 -------------------- //
 pub const SERVICE_ERROR: Code = Code(1, "err.service", "系统异常");
 pub const PARAM_INVALID: Code = Code(2, "err.paramInvalid", "请求参数错误");
@@ -110,3 +116,7 @@ pub const SFTP_FAILED: Code = Code(400003, "err.sftpFailed", "SFTP 操作失败"
 // -------------------- 工作区 500000 -------------------- //
 pub const WORKSPACE_SAVE_FAILED: Code =
     Code(500001, "err.workspaceSaveFailed", "保存打开的标签失败");
+
+// -------------------- 远程桌面 600000 -------------------- //
+pub const RDP_CONNECT_FAILED: Code = Code(600001, "err.rdpConnectFailed", "远程桌面连接失败");
+pub const RDP_NOT_FOUND: Code = Code(600002, "err.rdpNotFound", "远程桌面会话不存在或已关闭");

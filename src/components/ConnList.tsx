@@ -2,7 +2,7 @@ import { ChevronRight, CopyPlus, Download, FileInput, FolderInput, FolderPlus, I
 import { useEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode } from "react";
 import { connApi } from "../lib/api";
 import { loadGroups, saveGroups } from "../lib/groups";
-import { colorClass, connAddress, jumpRef } from "../lib/format";
+import { colorClass, connAddress, isIncognito, jumpRef } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns, useToast } from "../lib/store";
 import type { MessageKey } from "../locales/zh-CN";
@@ -331,7 +331,7 @@ export default function ConnList({ title, emptyDesc, onOpen, openItems }: Props)
             {color && <span className={cx("size-2 shrink-0 rounded-full", color)} />}
             <span className={cx("truncate text-[13px] font-medium", c.production && "text-red-600 dark:text-red-400")}>{c.name}</span>
             {c.production && <ProdBadge />}
-            {c.incognito && <IncognitoBadge />}
+            {isIncognito(c) && <IncognitoBadge />}
           </div>
           <div className="truncate font-mono text-[11px] text-muted">{connAddress(c)}</div>
         </div>

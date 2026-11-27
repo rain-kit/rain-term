@@ -419,14 +419,38 @@ impl SshClient {
         cancel: &CancellationToken,
     ) -> Result<Connected, SshError> {
         let method = auth::prepare(t).await?;
-        let addr = t.addr();
         let begin = Instant::now();
-        let open =
-            self.handle
-                .channel_open_direct_tcpip(t.host.as_str(), t.port as u32, "127.0.0.1", 0);
+        let stream = self
+            .open_tunnel(jump, &t.host, t.port, opts.timeout, cancel)
+            .await?;
+        handshake(
+            stream,
+            t,
+            method,
+            opts,
+            cancel,
+            begin,
+            Some(self.clone()),
+        )
+        .await
+    }
+
+    /// 通过 direct-tcpip 让服务器连接 host:port，返回这条 channel 上的字节流；jump 是本连接在提示里的名称。
+    pub async fn open_tunnel(
+        &self,
+        jump: &str,
+        host: &str,
+        port: u16,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<russh::ChannelStream<client::Msg>, SshError> {
+        let addr = join_host_port(host, port);
+        let open = self
+            .handle
+            .channel_open_direct_tcpip(host, port as u32, "127.0.0.1", 0);
         let channel = tokio::select! {
             _ = cancel.cancelled() => return Err(SshError::Cancelled),
-            r = tokio::time::timeout(opts.timeout, open) => match r {
+            r = tokio::time::timeout(timeout, open) => match r {
                 Ok(Ok(ch)) => ch,
                 Ok(Err(russh::Error::ChannelOpenFailure(f))) => {
                     return Err(SshError::Other(
@@ -439,16 +463,7 @@ impl SshClient {
                 Err(_) => return Err(SshError::Other(msg!("err.ssh.jumpChannelTimeout", "跳板机 {jump} 连接 {addr} 超时", jump, addr))),
             },
         };
-        handshake(
-            channel.into_stream(),
-            t,
-            method,
-            opts,
-            cancel,
-            begin,
-            Some(self.clone()),
-        )
-        .await
+        Ok(channel.into_stream())
     }
 }
 

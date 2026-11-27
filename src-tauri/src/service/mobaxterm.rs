@@ -1,23 +1,25 @@
 //! MobaXterm 会话导入。
 //!
 //! `.mxtsessions`、单个 `.moba`、以及配置备份里的 `[Bookmarks]` 都是同一套记录：
-//! 一段以 `#` 分段、连接参数再以 `%` 分隔的文本。只导入 SSH（类型 0）和 SFTP（类型 7）。
+//! 一段以 `#` 分段、连接参数再以 `%` 分隔的文本。导入 SSH（类型 0）、SFTP（类型 7）和远程桌面（类型 4）。
 //! 导出的会话文件不含密码；`<default>` 用户名用本机登录名补上。
 
 use std::collections::HashMap;
 
 use tracing::warn;
 
-use crate::model::{AuthType, ConnParams, Connection, SshParams};
+use crate::model::{AuthType, ConnParams, Connection, RdpParams, SshParams};
 
 const SSH: &str = "0";
 const SFTP: &str = "7";
+const RDP: &str = "4";
 
 struct Raw {
     id: String,
     name: String,
     group: String,
     note: String,
+    rdp: bool,
     host: String,
     port: i32,
     user: String,
@@ -35,7 +37,7 @@ struct Gateway {
 }
 
 /// 文本像 MobaXterm 的会话导出时返回连接；否则返回 None。
-/// 文件里只有远程桌面等非 SSH 会话时返回空列表。
+/// 文件里只有 Telnet 等不支持的会话时返回空列表。
 pub(crate) fn parse(text: &str) -> Option<Vec<Connection>> {
     let text = text.trim_start_matches('\u{feff}');
     if !looks_like(text) {
@@ -103,7 +105,7 @@ fn folder_name(value: &str) -> String {
 fn raw_session(name: &str, value: &str, group: &str) -> Option<Raw> {
     let fields = connection_fields(value)?;
     let kind = fields.first().map(String::as_str)?;
-    if kind != SSH && kind != SFTP {
+    if kind != SSH && kind != SFTP && kind != RDP {
         return None;
     }
     let host = field(&fields, 1);
@@ -111,7 +113,9 @@ fn raw_session(name: &str, value: &str, group: &str) -> Option<Raw> {
         return None;
     }
     let user = resolve_user(&field(&fields, 3));
-    let (key, init_dir, gateways) = if kind == SFTP {
+    let (key, init_dir, gateways) = if kind == RDP {
+        (String::new(), String::new(), Vec::new())
+    } else if kind == SFTP {
         (moba_path(&field(&fields, 9)), field(&fields, 6), Vec::new())
     } else {
         (
@@ -125,6 +129,7 @@ fn raw_session(name: &str, value: &str, group: &str) -> Option<Raw> {
         name: name.trim().to_string(),
         group: group.to_string(),
         note: unescape(&comment_of(value)),
+        rdp: kind == RDP,
         host,
         port: field(&fields, 2).parse().unwrap_or(0),
         user,
@@ -228,7 +233,7 @@ fn to_connections(mut raws: Vec<Raw>) -> Vec<Connection> {
         raw.id = format!("moba-{i}");
     }
     let mut by_endpoint: HashMap<(String, i32, String), String> = HashMap::new();
-    for raw in &raws {
+    for raw in raws.iter().filter(|r| !r.rdp) {
         let port = if raw.port == 0 { 22 } else { raw.port };
         by_endpoint
             .entry((raw.host.clone(), port, raw.user.clone()))
@@ -257,6 +262,7 @@ fn to_connections(mut raws: Vec<Raw>) -> Vec<Connection> {
                     },
                     group: String::new(),
                     note: String::new(),
+                    rdp: false,
                     host: gw.host.clone(),
                     port: gw.port,
                     user: gw.user.clone(),
@@ -278,12 +284,15 @@ fn to_connections(mut raws: Vec<Raw>) -> Vec<Connection> {
     raws.extend(extra);
     let mut out = Vec::new();
     for raw in &raws {
-        let mut conn = Connection {
-            id: raw.id.clone(),
-            name: raw.name.clone(),
-            group: raw.group.clone(),
-            note: raw.note.clone(),
-            params: ConnParams::Ssh(SshParams {
+        let params = if raw.rdp {
+            ConnParams::Rdp(RdpParams {
+                host: raw.host.clone(),
+                port: raw.port,
+                user: raw.user.clone(),
+                ..RdpParams::default()
+            })
+        } else {
+            ConnParams::Ssh(SshParams {
                 host: raw.host.clone(),
                 port: raw.port,
                 user: raw.user.clone(),
@@ -300,7 +309,14 @@ fn to_connections(mut raws: Vec<Raw>) -> Vec<Connection> {
                     .map(|(_, jump)| jump.clone())
                     .unwrap_or_default(),
                 ..SshParams::default()
-            }),
+            })
+        };
+        let mut conn = Connection {
+            id: raw.id.clone(),
+            name: raw.name.clone(),
+            group: raw.group.clone(),
+            note: raw.note.clone(),
+            params,
             ..Connection::default()
         };
         conn.normalize();
@@ -316,13 +332,10 @@ fn to_connections(mut raws: Vec<Raw>) -> Vec<Connection> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ConnParams;
 
     fn ssh_of(conns: &[Connection], name: &str) -> SshParams {
         let conn = conns.iter().find(|c| c.name == name).unwrap();
-        match &conn.params {
-            ConnParams::Ssh(p) => p.clone(),
-        }
+        crate::model::tests::ssh_of(conn).clone()
     }
 
     #[test]
@@ -346,7 +359,13 @@ nested=#109#0%10.0.0.9%2222%dbuser%%-1%-1%%10.1.0.1__PIPE__10.1.0.2%22__PIPE__22
         assert!(names.contains(&"db"));
         assert!(names.contains(&"files"));
         assert!(names.contains(&"nested"));
-        assert!(!names.contains(&"win"));
+        let win = conns.iter().find(|c| c.name == "win").unwrap();
+        let rdp = crate::model::tests::rdp_of(win);
+        assert_eq!(
+            (rdp.host.as_str(), rdp.port, rdp.user.as_str()),
+            ("10.0.0.3", 3389, "admin")
+        );
+        assert!(win.jump_ref().is_none());
 
         let db = conns.iter().find(|c| c.name == "db").unwrap();
         assert_eq!(db.group, "生产");

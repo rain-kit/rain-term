@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use rain_dial::core::rdp::cert::CertStore;
 use rain_dial::core::ssh::known_hosts::HostKeyStore;
 use rain_dial::core::ssh::shell::PtySize;
 use rain_dial::error;
@@ -48,7 +49,11 @@ fn fixture(srv: &TestServer) -> Fixture {
     HostKeyStore::new(known.clone(), vec![])
         .add("127.0.0.1", srv.addr.port(), srv.key.public_key())
         .unwrap();
-    let host_keys = HostKeyService::new(HostKeyStore::new(known, vec![]), Arc::new(NoopSink));
+    let host_keys = HostKeyService::new(
+        HostKeyStore::new(known, vec![]),
+        CertStore::new(dir.join("rdp_known_hosts")),
+        Arc::new(NoopSink),
+    );
     let conns = Arc::new(ConnService::new(
         ConnStore::new(dir.join("connections.json")),
         Secrets::new(Box::new(MemoryBackend::default())),

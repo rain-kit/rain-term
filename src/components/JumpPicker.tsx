@@ -1,7 +1,7 @@
 import { History, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { colorClass, connAddress } from "../lib/format";
+import { colorClass, connAddress, isIncognito } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns } from "../lib/store";
 import { cx, IconButton, IncognitoBadge, ProdBadge } from "./ui";
@@ -46,6 +46,7 @@ export default function JumpPicker({
   const items = useMemo(() => {
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const hits = conns.filter((c) => {
+      if (c.kind !== "ssh") return false;
       const text = [c.name, connAddress(c), c.group ?? "", c.note ?? ""].join("\n").toLowerCase();
       return words.every((w) => text.includes(w));
     });
@@ -126,7 +127,7 @@ export default function JumpPicker({
                     <div className="flex items-center gap-2">
                       <span className={cx("truncate text-[13px] font-medium", c.production && "text-red-600 dark:text-red-400")}>{c.name}</span>
                       {c.production && <ProdBadge />}
-                      {c.incognito && <IncognitoBadge />}
+                      {isIncognito(c) && <IncognitoBadge />}
                       {c.group && <span className="shrink-0 rounded bg-subtle px-1.5 text-[11px] text-muted">{c.group}</span>}
                     </div>
                     <div className="truncate font-mono text-[11px] text-muted">{connAddress(c)}</div>

@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Rain Term",
   "mainBinaryName": "rain-dial",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "identifier": "com.rain-dial.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -36,8 +36,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "shortDescription": "SSH 客户端",
-    "longDescription": "轻量的 SSH 客户端：多标签终端、跳板机和 SFTP 文件管理。",
+    "shortDescription": "SSH / 远程桌面客户端",
+    "longDescription": "轻量的 SSH / 远程桌面客户端：多标签终端、Windows 远程桌面、跳板机和 SFTP 文件管理。",
     "category": "DeveloperTool",
     "windows": {
       "nsis": {

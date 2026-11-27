@@ -24,6 +24,7 @@ export function ConnStatus({
   incognito = false,
   connectingText,
   message,
+  extra,
   onReconnect,
 }: {
   status: TabStatus;
@@ -32,6 +33,8 @@ export function ConnStatus({
   incognito?: boolean;
   connectingText: string;
   message?: string;
+  /** 已连接时显示在右侧。 */
+  extra?: ReactNode;
   onReconnect: () => void;
 }) {
   const { t } = useI18n();
@@ -56,6 +59,7 @@ export function ConnStatus({
             {t("status.incognito")}
           </span>
         )}
+        {extra && <span className="ml-auto shrink-0 text-muted tabular-nums">{extra}</span>}
       </>
     ) : (
       <>

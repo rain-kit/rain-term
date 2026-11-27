@@ -5,18 +5,21 @@ use std::time::Duration;
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::hostkey::HostKeyService;
 use crate::config::ToolsConfig;
+use crate::core::rdp::{self, RdpTarget};
 use crate::core::ssh::jump::{self, Hop};
 use crate::core::ssh::{self, SshTarget};
 use crate::error::{self, ApiError, ApiResult};
 use crate::events::{self, EventSink};
 use crate::i18n::pick;
 use crate::model::{
-    ConnParams, ConnView, Connection, SaveConnReq, SshParams, TestResult, validate_refs,
+    ConnParams, ConnView, Connection, DEFAULT_RDP_HEIGHT, DEFAULT_RDP_WIDTH, RdpParams,
+    SaveConnReq, SshParams, TestResult, validate_refs,
 };
 use crate::secrets::{self, Secrets};
 use crate::store::{ConnStore, StoreError};
@@ -405,7 +408,50 @@ impl ConnService {
         validate_refs(&c, &self.store.list()?).map_err(|e| error::CONN_INVALID.msg(e))?;
         match &c.params {
             ConnParams::Ssh(p) => self.test_ssh(&c, p).await,
+            ConnParams::Rdp(p) => self.test_rdp(&c, p).await,
         }
+    }
+
+    /// 只验证网络、证书和密码，不登录桌面，避免挤掉这个用户正在使用的会话。
+    async fn test_rdp(&self, c: &Connection, p: &RdpParams) -> ApiResult<TestResult> {
+        let cancel = CancellationToken::new();
+        let opts = self.host_keys.rdp_options(&c.id, &c.name);
+        let port = p.port as u16;
+        let (stream, jump, jump_elapsed) = match c.jump_ref() {
+            None => {
+                let begin = Instant::now();
+                let s = rdp::dial_tcp(&p.host, port, opts.timeout, &cancel).await?;
+                (s, None, begin.elapsed())
+            }
+            Some(id) => {
+                let j = self.resolve(id)?;
+                let jp = j.ssh_params().map_err(|m| error::CONN_INVALID.msg(m))?;
+                let conn = self.dial_ssh(&j, jp, false).await?;
+                let begin = Instant::now();
+                let s = conn
+                    .client
+                    .open_tunnel(&j.name, &p.host, port, opts.timeout, &cancel)
+                    .await
+                    .inspect_err(|_| conn.client.close())
+                    .map_err(|e| error::RDP_CONNECT_FAILED.msg(e.msg()))?;
+                let elapsed = conn.elapsed + begin.elapsed();
+                (Box::new(s) as rdp::BoxStream, Some(conn.client), elapsed)
+            }
+        };
+        let target = RdpTarget::from_params(p, DEFAULT_RDP_WIDTH as u32, DEFAULT_RDP_HEIGHT as u32, 100);
+        let r = rdp::probe(stream, &target, &opts, &cancel, Instant::now()).await;
+        if let Some(j) = jump {
+            j.close();
+        }
+        let elapsed = r.inspect_err(
+            |e| warn!(conn = %c.name, err = %e, "测试远程桌面连接失败"),
+        )? + jump_elapsed;
+        let elapsed_ms = elapsed.as_millis() as u64;
+        info!(conn = %c.name, elapsed_ms, "测试远程桌面连接成功");
+        Ok(TestResult {
+            elapsed_ms,
+            server_version: None,
+        })
     }
 
     async fn test_ssh(&self, c: &Connection, p: &SshParams) -> ApiResult<TestResult> {
@@ -461,10 +507,12 @@ impl ConnService {
         let mut hops: Vec<Hop> = jumps
             .iter()
             .rev()
-            .map(|j| match &j.params {
-                ConnParams::Ssh(jp) => hop(j, jp),
+            .map(|j| {
+                j.ssh_params()
+                    .map(|jp| hop(j, jp))
+                    .map_err(|m| error::CONN_INVALID.msg(m))
             })
-            .collect();
+            .collect::<ApiResult<_>>()?;
         hops.push(hop(c, p));
         Ok(jump::connect_chain(&hops, &CancellationToken::new()).await?)
     }
@@ -511,9 +559,10 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::core::rdp::cert::CertStore;
     use crate::core::ssh::known_hosts::HostKeyStore;
-    use crate::model::tests::ssh;
-    use crate::model::{AuthType, ConnParams};
+    use crate::model::tests::{rdp_of, ssh, ssh_of, ssh_of_mut};
+    use crate::model::{AuthType, ConnKind};
     use crate::secrets::MemoryBackend;
     use base64::Engine;
 
@@ -547,6 +596,7 @@ mod tests {
             Secrets::new(Box::new(MemoryBackend::default())),
             HostKeyService::new(
                 HostKeyStore::new(dir.join("known_hosts"), vec![]),
+                CertStore::new(dir.join("rdp_known_hosts")),
                 events.clone(),
             ),
             events.clone(),
@@ -612,7 +662,7 @@ mod tests {
 
         // 切换到 agent 认证时删除用不到的密码。
         let mut c = create(&f.svc, ssh("y", "")).conn;
-        let ConnParams::Ssh(p) = &mut c.params;
+        let p = ssh_of_mut(&mut c);
         p.auth = AuthType::Agent;
         assert!(
             !f.svc
@@ -822,12 +872,15 @@ db=#109#0%10.0.0.2%22%root%%-1%-1%%10.0.0.1%22%ops%
 win=#91#4%10.0.0.3%3389%admin%
 ";
         let path = write_file(&f, "sessions.mxtsessions", text);
-        assert_eq!(f.svc.import_mobaxterm(&path).unwrap(), 2);
+        assert_eq!(f.svc.import_mobaxterm(&path).unwrap(), 3);
         let list = f.svc.list().unwrap();
         let bastion = list.iter().find(|v| v.conn.name == "bastion").unwrap();
         let db = list.iter().find(|v| v.conn.name == "db").unwrap();
+        let win = list.iter().find(|v| v.conn.name == "win").unwrap();
         assert_eq!(bastion.conn.group, "生产");
         assert_eq!(db.conn.jump_ref(), Some(bastion.conn.id.as_str()));
+        assert_eq!(win.conn.kind(), ConnKind::Rdp);
+        assert_eq!(rdp_of(&win.conn).user, "admin");
         assert!(!db.conn.id.starts_with("moba-"));
         assert!(!list.iter().any(|v| v.has_password));
 
@@ -860,7 +913,7 @@ win=#91#4%10.0.0.3%3389%admin%
         assert_eq!(view.conn.name, "db");
         assert_eq!(view.conn.note, "主库");
         let got = f.svc.resolve(&view.conn.id).unwrap();
-        let ConnParams::Ssh(p) = &got.params;
+        let p = ssh_of(&got);
         assert_eq!(
             (
                 p.host.as_str(),
@@ -872,7 +925,7 @@ win=#91#4%10.0.0.3%3389%admin%
             ("10.0.0.1", 2222, "root", "beac3d85988e", AuthType::Password)
         );
 
-        // 本应用自己的文件仍然丢掉密码。解不开的 FinalShell 密码不挡住这台主机。远程桌面不导入。
+        // 本应用自己的文件仍然丢掉密码。解不开的 FinalShell 密码不挡住这台主机。
         let rain = f
             .svc
             .import(r#"[{"kind":"ssh","host":"h","user":"u","password":"secret"}]"#)
@@ -895,11 +948,23 @@ win=#91#4%10.0.0.3%3389%admin%
                 .any(|v| v.conn.name == "broken" && v.has_password)
         );
         assert_eq!(
-            import(r#"{"name":"win","host":"10.0.0.3","user_name":"admin","conection_type":101}"#)
-                .unwrap_err()
-                .msg
-                .i18n,
-            "err.import.empty"
+            import(r#"{"name":"win","host":"10.0.0.3","user_name":"admin","password":"UU8hWV51DmVNgmX/pUd0LlaEo53VTa6s","conection_type":101}"#)
+                .unwrap(),
+            1
+        );
+        let win = f
+            .svc
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|v| v.conn.name == "win")
+            .unwrap();
+        assert!(win.has_password);
+        let resolved = f.svc.resolve(&win.conn.id).unwrap();
+        let p = rdp_of(&resolved);
+        assert_eq!(
+            (p.host.as_str(), p.port, p.password.as_str()),
+            ("10.0.0.3", 3389, "beac3d85988e")
         );
         let agent = import(r#"{"name":"via-agent","host":"10.0.0.8","user_name":"root","authentication_type":2,"secret_key_id":"missing","conection_type":100}"#).unwrap();
         assert_eq!(agent, 1);
@@ -911,7 +976,7 @@ win=#91#4%10.0.0.3%3389%admin%
             .find(|v| v.conn.name == "via-agent")
             .unwrap();
         let resolved = f.svc.resolve(&got.conn.id).unwrap();
-        let ConnParams::Ssh(p) = &resolved.params;
+        let p = ssh_of(&resolved);
         assert_eq!(p.auth, AuthType::Agent);
     }
 
@@ -923,10 +988,11 @@ win=#91#4%10.0.0.3%3389%admin%
             {"id":"b","name":"数据库","parent_id":"a"},
             {"id":"h2","name":"jump","host":"10.0.0.2","user_name":"ops","authentication_type":1,"conection_type":100,"parent_id":"a","proxy_id":"0","order":0},
             {"id":"h1","name":"db","host":"10.0.0.1","user_name":"root","password":"UU8hWV51DmVNgmX/pUd0LlaEo53VTa6s","authentication_type":1,"conection_type":100,"parent_id":"b","proxy_id":"h2","order":1},
-            {"id":"rdp","name":"win","host":"10.0.0.3","user_name":"admin","conection_type":101,"parent_id":"root"}
+            {"id":"rdp","name":"win","host":"10.0.0.3","user_name":"admin","conection_type":101,"parent_id":"root","proxy_id":"h2","order":2},
+            {"id":"vnc","name":"other","host":"10.0.0.4","user_name":"admin","conection_type":102,"parent_id":"root"}
         ]"#;
         let path = write_file(&f, "hosts.json", text);
-        assert_eq!(f.svc.import_finalshell(&path).unwrap(), 2);
+        assert_eq!(f.svc.import_finalshell(&path).unwrap(), 3);
         let list = f.svc.list().unwrap();
         assert_eq!(list[0].conn.name, "jump");
         assert_eq!(list[0].conn.group, "生产");
@@ -934,6 +1000,8 @@ win=#91#4%10.0.0.3%3389%admin%
         assert_eq!(list[1].conn.group, "生产/数据库");
         assert_eq!(list[1].conn.jump_ref(), Some(list[0].conn.id.as_str()));
         assert!(list[1].has_password);
+        assert_eq!(list[2].conn.kind(), ConnKind::Rdp);
+        assert_eq!(list[2].conn.jump_ref(), Some(list[0].conn.id.as_str()));
 
         let root = f.dir.join("fs");
         let folder = root.join("conn").join("fold");
@@ -980,7 +1048,7 @@ win=#91#4%10.0.0.3%3389%admin%
         assert_eq!(keyed.conn.group, "生产");
         assert!(keyed.has_key_passphrase);
         let got = f.svc.resolve(&keyed.conn.id).unwrap();
-        let ConnParams::Ssh(p) = &got.params;
+        let p = ssh_of(&got);
         assert_eq!(p.auth, AuthType::Key);
         assert_eq!(p.key_passphrase, "beac3d85988e");
         assert_eq!(std::fs::read_to_string(&p.key_path).unwrap(), pem);

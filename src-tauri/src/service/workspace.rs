@@ -15,6 +15,7 @@ pub const MAX_RECENT: usize = 20;
 pub enum TabKind {
     Term,
     Sftp,
+    Rdp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

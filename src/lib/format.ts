@@ -1,4 +1,4 @@
-import type { ConnKind, Connection } from "./types";
+import type { ConnKind, Connection, TabKind } from "./types";
 
 export const isMac = navigator.userAgent.includes("Mac");
 export const isWindows = navigator.userAgent.includes("Windows");
@@ -7,9 +7,14 @@ export const QUICK_CONNECT_KEY = isMac ? "⌘K" : "Ctrl+Shift+K";
 export const isQuickConnectKey = (e: KeyboardEvent) =>
   e.code === "KeyK" && !e.altKey && (isMac ? e.metaKey && !e.ctrlKey && !e.shiftKey : e.ctrlKey && e.shiftKey && !e.metaKey);
 
-export const KIND_LABEL: Record<ConnKind, string> = { ssh: "SSH" };
+export const KIND_LABEL: Record<ConnKind, string> = { ssh: "SSH", rdp: "RDP" };
 
 export const DEFAULT_SSH_PORT = 22;
+export const DEFAULT_PORT: Record<ConnKind, number> = { ssh: DEFAULT_SSH_PORT, rdp: 3389 };
+
+/** 与后端 model.rs 的 RDP_MIN_SIZE、RDP_MAX_SIZE 一致。 */
+export const RDP_MIN_SIZE = 200;
+export const RDP_MAX_SIZE = 8192;
 
 /** 连接标记颜色，值保存在 connections.json 的 color 字段。 */
 export const CONN_COLORS = {
@@ -31,10 +36,20 @@ export function hostPort(host: string, port: number) {
   return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
-/** 列表中连接名下面的一行地址：用户@主机，端口不是 22 时带上端口。 */
+/** 列表中连接名下面的一行地址：用户@主机，端口不是默认端口时带上端口；没有用户名时只显示主机。 */
 export function connAddress(c: Connection): string {
-  return `${c.user}@${c.port === DEFAULT_SSH_PORT ? c.host : hostPort(c.host, c.port)}`;
+  const host = c.port === DEFAULT_PORT[c.kind] ? c.host : hostPort(c.host, c.port);
+  return c.user ? `${c.user}@${host}` : host;
 }
+
+/** 无痕模式只有 SSH 连接有。 */
+export const isIncognito = (c: Connection) => c.kind === "ssh" && !!c.incognito;
+
+/** 打开连接时默认的标签类型。 */
+export const defaultTab = (c: Connection): TabKind => (c.kind === "rdp" ? "rdp" : "term");
+
+/** 1920 × 1080 */
+export const formatResolution = (width: number, height: number) => `${width} × ${height}`;
 
 /** 1536 → 1.5 KB；字节数原样显示，其余保留一位小数。 */
 export function formatBytes(n: number): string {

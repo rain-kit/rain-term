@@ -8,11 +8,17 @@ use crate::i18n::Msg;
 pub const DEFAULT_SSH_PORT: i32 = 22;
 pub const DEFAULT_KEEPALIVE: i32 = 30;
 pub const MAX_KEEPALIVE: i32 = 3600;
+pub const DEFAULT_RDP_PORT: i32 = 3389;
+pub const DEFAULT_RDP_WIDTH: i32 = 1920;
+pub const DEFAULT_RDP_HEIGHT: i32 = 1080;
+pub const RDP_MIN_SIZE: i32 = 200;
+pub const RDP_MAX_SIZE: i32 = 8192;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ConnKind {
     Ssh,
+    Rdp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -68,11 +74,58 @@ impl Default for SshParams {
     }
 }
 
+/// 远程桌面的分辨率：跟随窗口大小，或固定为 width × height。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RdpResolution {
+    #[default]
+    Fit,
+    Fixed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RdpParams {
+    pub host: String,
+    pub port: i32,
+    pub user: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub domain: String,
+    /// 通过这个 SSH 连接转发到远程桌面。
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub jump_id: String,
+    pub resolution: RdpResolution,
+    pub width: i32,
+    pub height: i32,
+    /// 共享文本剪贴板。
+    pub clipboard: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub password: String,
+}
+
+impl Default for RdpParams {
+    fn default() -> Self {
+        RdpParams {
+            host: String::new(),
+            port: DEFAULT_RDP_PORT,
+            user: String::new(),
+            domain: String::new(),
+            jump_id: String::new(),
+            resolution: RdpResolution::Fit,
+            width: DEFAULT_RDP_WIDTH,
+            height: DEFAULT_RDP_HEIGHT,
+            clipboard: true,
+            password: String::new(),
+        }
+    }
+}
+
 /// 连接参数，JSON 中用 kind 字段区分类型，和公共字段平铺在一起。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ConnParams {
     Ssh(SshParams),
+    Rdp(RdpParams),
 }
 
 impl Default for ConnParams {
@@ -121,18 +174,32 @@ impl Connection {
     pub fn kind(&self) -> ConnKind {
         match self.params {
             ConnParams::Ssh(_) => ConnKind::Ssh,
+            ConnParams::Rdp(_) => ConnKind::Rdp,
+        }
+    }
+
+    /// SSH 连接的参数，其他类型的连接返回错误。
+    pub fn ssh_params(&self) -> Result<&SshParams, Msg> {
+        match &self.params {
+            ConnParams::Ssh(p) => Ok(p),
+            _ => Err(msg!("err.conn.notSsh", "这个功能只支持 SSH 连接")),
         }
     }
 
     /// 跳板机的连接 ID，没有设置时返回 None。
     pub fn jump_ref(&self) -> Option<&str> {
-        let ConnParams::Ssh(p) = &self.params;
-        (!p.jump_id.is_empty()).then_some(p.jump_id.as_str())
+        let id = match &self.params {
+            ConnParams::Ssh(p) => &p.jump_id,
+            ConnParams::Rdp(p) => &p.jump_id,
+        };
+        (!id.is_empty()).then_some(id.as_str())
     }
 
     pub fn jump_ref_mut(&mut self) -> &mut String {
-        let ConnParams::Ssh(p) = &mut self.params;
-        &mut p.jump_id
+        match &mut self.params {
+            ConnParams::Ssh(p) => &mut p.jump_id,
+            ConnParams::Rdp(p) => &mut p.jump_id,
+        }
     }
 
     /// 去掉首尾空白、填充默认端口和名称，清掉当前认证方式用不到的字段。
@@ -158,6 +225,18 @@ impl Connection {
                     p.key_path.clear();
                 }
             }
+            ConnParams::Rdp(p) => {
+                for s in [&mut p.host, &mut p.user, &mut p.domain, &mut p.jump_id] {
+                    trim(s);
+                }
+                if p.port == 0 {
+                    p.port = DEFAULT_RDP_PORT;
+                }
+                if p.width == 0 || p.height == 0 {
+                    p.width = DEFAULT_RDP_WIDTH;
+                    p.height = DEFAULT_RDP_HEIGHT;
+                }
+            }
         }
         if self.name.is_empty() {
             self.name = self.default_name();
@@ -167,6 +246,8 @@ impl Connection {
     fn default_name(&self) -> String {
         match &self.params {
             ConnParams::Ssh(p) => format!("{}@{}", p.user, p.host),
+            ConnParams::Rdp(p) if p.user.is_empty() => p.host.clone(),
+            ConnParams::Rdp(p) => format!("{}@{}", p.user, p.host),
         }
     }
 
@@ -197,6 +278,32 @@ impl Connection {
                     ));
                 }
             }
+            ConnParams::Rdp(p) => {
+                if p.host.is_empty() {
+                    return Err(msg!("err.conn.hostRequired", "地址不能为空"));
+                }
+                if !valid_port(p.port) {
+                    let port = p.port;
+                    return Err(msg!("err.conn.portInvalid", "端口无效：{port}", port));
+                }
+                if p.user.is_empty() {
+                    return Err(msg!("err.conn.userRequired", "用户名不能为空"));
+                }
+                let range = RDP_MIN_SIZE..=RDP_MAX_SIZE;
+                if p.resolution == RdpResolution::Fixed
+                    && !(range.contains(&p.width) && range.contains(&p.height))
+                {
+                    let (width, height, min, max) = (p.width, p.height, RDP_MIN_SIZE, RDP_MAX_SIZE);
+                    return Err(msg!(
+                        "err.conn.rdpSizeInvalid",
+                        "分辨率的宽和高应在 {min} 到 {max} 之间：{width} × {height}",
+                        min,
+                        max,
+                        width,
+                        height
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -207,6 +314,7 @@ impl Connection {
                 p.password.clear();
                 p.key_passphrase.clear();
             }
+            ConnParams::Rdp(p) => p.password.clear(),
         }
     }
 
@@ -219,6 +327,7 @@ impl Connection {
                 AuthType::Key => vec![(KEY_PASSPHRASE, &mut p.key_passphrase)],
                 AuthType::Agent => vec![],
             },
+            ConnParams::Rdp(p) => vec![(PASSWORD, &mut p.password)],
         }
     }
 }
@@ -300,12 +409,17 @@ pub struct TestResult {
 #[serde(rename_all = "camelCase")]
 pub struct HostKeyPrompt {
     pub request_id: String,
+    pub kind: ConnKind,
     /// 测试尚未保存的连接时为空。
     pub conn_id: String,
     pub conn_name: String,
     pub host: String,
+    /// SSH 是密钥类型，远程桌面是证书的使用者。
     pub key_type: String,
     pub fingerprint: String,
+    /// 远程桌面证书变化时，之前信任的指纹。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous: Option<String>,
 }
 
 #[cfg(test)]
@@ -329,6 +443,44 @@ pub(crate) mod tests {
         c
     }
 
+    pub fn rdp(id: &str, jump: &str) -> Connection {
+        let mut c = Connection {
+            id: id.into(),
+            name: id.into(),
+            params: ConnParams::Rdp(RdpParams {
+                host: "win.example.com".into(),
+                user: "admin".into(),
+                jump_id: jump.into(),
+                password: "pw".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        c.normalize();
+        c
+    }
+
+    pub fn ssh_of(c: &Connection) -> &SshParams {
+        match &c.params {
+            ConnParams::Ssh(p) => p,
+            _ => panic!("不是 SSH 连接"),
+        }
+    }
+
+    pub fn ssh_of_mut(c: &mut Connection) -> &mut SshParams {
+        match &mut c.params {
+            ConnParams::Ssh(p) => p,
+            _ => panic!("不是 SSH 连接"),
+        }
+    }
+
+    pub fn rdp_of(c: &Connection) -> &RdpParams {
+        match &c.params {
+            ConnParams::Rdp(p) => p,
+            _ => panic!("不是远程桌面连接"),
+        }
+    }
+
     #[test]
     fn normalize_fills_defaults() {
         let mut c = Connection {
@@ -342,7 +494,7 @@ pub(crate) mod tests {
             ..Default::default()
         };
         c.normalize();
-        let ConnParams::Ssh(p) = &c.params;
+        let p = ssh_of(&c);
         assert_eq!(p.host, "srv");
         assert_eq!(p.port, DEFAULT_SSH_PORT);
         assert_eq!(p.key_path, "", "密码认证用不到私钥路径");
@@ -353,10 +505,10 @@ pub(crate) mod tests {
     fn validate_fields() {
         let mut c = ssh("a", "");
         assert!(c.validate().is_ok());
-        let ConnParams::Ssh(p) = &mut c.params;
+        let p = ssh_of_mut(&mut c);
         p.port = 70000;
         assert_eq!(c.validate().unwrap_err().i18n, "err.conn.portInvalid");
-        let ConnParams::Ssh(p) = &mut c.params;
+        let p = ssh_of_mut(&mut c);
         p.port = 22;
         p.auth = AuthType::Key;
         assert_eq!(c.validate().unwrap_err().i18n, "err.conn.keyPathRequired");
@@ -377,7 +529,7 @@ pub(crate) mod tests {
         assert_eq!(back, c);
 
         c.production = true;
-        let ConnParams::Ssh(p) = &mut c.params;
+        let p = ssh_of_mut(&mut c);
         p.incognito = true;
         let v = serde_json::to_value(&c).unwrap();
         assert_eq!(v["production"], true);
@@ -386,7 +538,7 @@ pub(crate) mod tests {
 
         let minimal: Connection =
             serde_json::from_str(r#"{"id":"x","kind":"ssh","host":"h"}"#).unwrap();
-        let ConnParams::Ssh(p) = &minimal.params;
+        let p = ssh_of(&minimal);
         assert_eq!(
             (p.host.as_str(), p.port, p.keepalive_seconds),
             ("h", DEFAULT_SSH_PORT, DEFAULT_KEEPALIVE)
@@ -402,7 +554,7 @@ pub(crate) mod tests {
         assert!(req.clear_key_passphrase);
         assert_eq!(req.conn.group, "生产");
         assert!(req.conn.production);
-        let ConnParams::Ssh(p) = &req.conn.params;
+        let p = ssh_of(&req.conn);
         assert_eq!(
             (
                 p.host.as_str(),
@@ -441,5 +593,60 @@ pub(crate) mod tests {
         assert_eq!(err.i18n, "err.conn.jumpCycle");
         assert_eq!(err.text(), "跳板机形成循环：c → a → b → c");
         assert!(validate_refs(&ssh("c", ""), &all).is_ok());
+    }
+
+    #[test]
+    fn rdp_defaults_and_json() {
+        let minimal: Connection =
+            serde_json::from_str(r#"{"id":"x","kind":"rdp","host":" win ","user":"u"}"#).unwrap();
+        let mut c = minimal.clone();
+        c.normalize();
+        let p = rdp_of(&c);
+        assert_eq!((p.host.as_str(), p.port), ("win", DEFAULT_RDP_PORT));
+        assert_eq!(p.resolution, RdpResolution::Fit);
+        assert!(p.clipboard, "默认共享剪贴板");
+        assert_eq!(c.name, "u@win");
+        assert_eq!(c.kind(), ConnKind::Rdp);
+        assert_eq!(c.ssh_params().unwrap_err().i18n, "err.conn.notSsh");
+
+        let mut c = rdp("r", "s1");
+        assert_eq!(c.secrets_mut().len(), 1);
+        c.clear_secrets();
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["kind"], "rdp");
+        assert_eq!(v["jumpId"], "s1");
+        assert!(v.get("password").is_none());
+        assert!(v.get("domain").is_none());
+        assert_eq!(serde_json::from_value::<Connection>(v).unwrap(), c);
+    }
+
+    #[test]
+    fn rdp_validate() {
+        let mut c = rdp("r", "");
+        assert!(c.validate().is_ok());
+        if let ConnParams::Rdp(p) = &mut c.params {
+            p.resolution = RdpResolution::Fixed;
+            p.width = 100;
+        }
+        assert_eq!(c.validate().unwrap_err().i18n, "err.conn.rdpSizeInvalid");
+        if let ConnParams::Rdp(p) = &mut c.params {
+            p.width = 1280;
+            p.user.clear();
+        }
+        assert_eq!(c.validate().unwrap_err().i18n, "err.conn.userRequired");
+    }
+
+    #[test]
+    fn rdp_can_use_ssh_jump_but_not_be_one() {
+        let all = vec![ssh("s1", ""), rdp("r1", "")];
+        assert!(validate_refs(&rdp("r2", "s1"), &all).is_ok());
+        assert_eq!(
+            validate_refs(&ssh("s2", "r1"), &all).unwrap_err().i18n,
+            "err.conn.jumpNotSsh"
+        );
+        assert_eq!(
+            validate_refs(&rdp("r2", "r1"), &all).unwrap_err().i18n,
+            "err.conn.jumpNotSsh"
+        );
     }
 }

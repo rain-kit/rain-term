@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Rain Term：基于 Tauri 2 的 SSH 客户端（多标签终端、跳板机、SFTP），架构沿用 [Rain Tunnel](https://github.com/rain-kit/rain-tunnel)。显示名是 Rain Term，仓库是 `rain-kit/rain-term`；包名、identifier、数据目录和凭据库服务名仍为 `rain-dial`，改动后会让已有的连接和密码读不到。后端 Rust 在 `src-tauri`，前端 React + TypeScript 在 `src`。
+Rain Term：基于 Tauri 2 的 SSH / 远程桌面客户端（多标签终端、RDP 远程桌面、跳板机、SFTP），架构沿用 [Rain Tunnel](https://github.com/rain-kit/rain-tunnel)。显示名是 Rain Term，仓库是 `rain-kit/rain-term`；包名、identifier、数据目录和凭据库服务名仍为 `rain-dial`，改动后会让已有的连接和密码读不到。后端 Rust 在 `src-tauri`，前端 React + TypeScript 在 `src`。
 
 ## 分层
 

@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rain_dial::core::rdp::cert::CertStore;
 use rain_dial::core::ssh::known_hosts::HostKeyStore;
 use rain_dial::core::ssh::shell::PtySize;
 use rain_dial::events::NoopSink;
@@ -152,6 +153,7 @@ fn fixture() -> Fixture {
     let dir = temp_dir();
     let host_keys = HostKeyService::new(
         HostKeyStore::new(dir.join("known_hosts"), vec![]),
+        CertStore::new(dir.join("rdp_known_hosts")),
         Arc::new(NoopSink),
     );
     let conns = Arc::new(ConnService::new(

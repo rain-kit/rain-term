@@ -2,7 +2,7 @@
 //!
 //! 单份导出是一个 JSON 对象；数据目录则是 `conn` 下的 `*_connect_config.json`、`folder.json`，
 //! 加上根上的 `config.json`（私钥）。密码用 DES 加密后做 Base64，密钥由密文前 8 字节经
-//! `java.util.Random` 派生，再取 MD5 的前 8 字节。远程桌面（`conection_type` 101）会跳过。
+//! `java.util.Random` 派生，再取 MD5 的前 8 字节。SSH 是 `conection_type` 100，远程桌面是 101。
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -13,7 +13,7 @@ use md5::{Digest, Md5};
 use serde_json::{Map, Value};
 use tracing::warn;
 
-use crate::model::{AuthType, ConnParams, Connection, SshParams};
+use crate::model::{AuthType, ConnParams, Connection, RdpParams, SshParams};
 use crate::util::write_file_atomic;
 
 const FS_SSH: i32 = 100;
@@ -406,7 +406,8 @@ fn to_connections(mut bundle: Bundle, keys_dir: &Path) -> Vec<Connection> {
     let mut written: HashMap<String, (String, String)> = HashMap::new();
     let mut out = Vec::new();
     for host in &bundle.hosts {
-        if host.conn_type == FS_RDP || (host.conn_type != FS_SSH && host.conn_type != 0) {
+        let rdp = host.conn_type == FS_RDP;
+        if !rdp && host.conn_type != FS_SSH && host.conn_type != 0 {
             continue;
         }
         let name = host.name.trim();
@@ -415,20 +416,54 @@ fn to_connections(mut bundle: Bundle, keys_dir: &Path) -> Vec<Connection> {
         } else {
             name
         };
+        let params = if rdp {
+            ConnParams::Rdp(RdpParams {
+                host: host.host.clone(),
+                port: host.port,
+                user: host.user.clone(),
+                ..RdpParams::default()
+            })
+        } else {
+            ConnParams::Ssh(SshParams {
+                host: host.host.clone(),
+                port: host.port,
+                user: host.user.clone(),
+                ..SshParams::default()
+            })
+        };
         let mut conn = Connection {
             id: host.id.clone(),
             name: name.to_string(),
             group: group_of(&host.parent_id, &folders),
             note: host.description.trim().to_string(),
-            params: ConnParams::Ssh(SshParams {
-                host: host.host.clone(),
-                port: host.port,
-                user: host.user.clone(),
-                ..SshParams::default()
-            }),
+            params,
             ..Connection::default()
         };
-        let ConnParams::Ssh(params) = &mut conn.params;
+        let jump = host.proxy_id.as_str();
+        if !jump.is_empty()
+            && jump != "0"
+            && jump != "root"
+            && jump != host.id
+            && included.contains(jump)
+        {
+            *conn.jump_ref_mut() = jump.to_string();
+        }
+        let params = match &mut conn.params {
+            ConnParams::Ssh(p) => p,
+            ConnParams::Rdp(p) => {
+                if !host.password.trim().is_empty() {
+                    match decode_password(&host.password) {
+                        Some(password) => p.password = password,
+                        None => warn!(
+                            conn = label,
+                            "FinalShell 密码解密失败，连接会导入但不带密码"
+                        ),
+                    }
+                }
+                push_valid(&mut out, conn, label);
+                continue;
+            }
+        };
         if host.auth_type == FS_AUTH_KEY {
             match key_material(&host.secret_key_id, &bundle.keys, keys_dir, &mut written) {
                 Some((path, passphrase)) => {
@@ -458,27 +493,22 @@ fn to_connections(mut bundle: Bundle, keys_dir: &Path) -> Vec<Connection> {
             );
             params.auth = AuthType::Password;
         }
-        let jump = host.proxy_id.as_str();
-        if !jump.is_empty()
-            && jump != "0"
-            && jump != "root"
-            && jump != host.id
-            && included.contains(jump)
-        {
-            params.jump_id = jump.to_string();
-        }
-        conn.normalize();
-        if let Err(err) = conn.validate() {
-            warn!(
-                conn = label,
-                reason = err.text(),
-                "跳过无效的 FinalShell 连接"
-            );
-            continue;
-        }
-        out.push(conn);
+        push_valid(&mut out, conn, label);
     }
     out
+}
+
+fn push_valid(out: &mut Vec<Connection>, mut conn: Connection, label: &str) {
+    conn.normalize();
+    if let Err(err) = conn.validate() {
+        warn!(
+            conn = label,
+            reason = err.text(),
+            "跳过无效的 FinalShell 连接"
+        );
+        return;
+    }
+    out.push(conn);
 }
 
 fn group_of(parent_id: &str, folders: &HashMap<&str, &Folder>) -> String {

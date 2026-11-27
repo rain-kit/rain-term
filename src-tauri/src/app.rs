@@ -5,6 +5,7 @@ use tauri::{App, AppHandle, Emitter, Manager, RunEvent};
 use tracing::{error, info};
 
 use crate::config::AppConfig;
+use crate::core::rdp::cert::CertStore;
 use crate::core::ssh::known_hosts::HostKeyStore;
 use crate::events::{self, EventSink};
 use crate::logging::LevelHandle;
@@ -12,6 +13,7 @@ use crate::secrets::{KeyringBackend, Secrets};
 use crate::service::conn::ConnService;
 use crate::service::hostkey::HostKeyService;
 use crate::service::pool::ClientPool;
+use crate::service::rdp::RdpService;
 use crate::service::session::SessionService;
 use crate::service::sftp::SftpService;
 use crate::service::workspace::WorkspaceService;
@@ -28,6 +30,7 @@ pub struct AppState {
     pub pool: Arc<ClientPool>,
     pub sessions: Arc<SessionService>,
     pub sftp: Arc<SftpService>,
+    pub rdp: Arc<RdpService>,
     pub workspace: WorkspaceService,
     pub updater: Updater,
 }
@@ -37,10 +40,11 @@ impl AppState {
         self.data_dir.join("logs")
     }
 
-    /// 关闭全部终端会话、SFTP 面板和 SSH 连接。
+    /// 关闭全部终端会话、SFTP 面板、远程桌面和 SSH 连接。
     pub fn close_all(&self) {
         self.sessions.close_all();
         self.sftp.close_all();
+        self.rdp.close_all();
         self.pool.close_all();
     }
 }
@@ -75,6 +79,7 @@ pub fn setup(
             data_dir.join("known_hosts"),
             HostKeyStore::user_known_hosts(),
         ),
+        CertStore::new(data_dir.join("rdp_known_hosts")),
         sink.clone(),
     );
     let conns = Arc::new(ConnService::new(
@@ -86,6 +91,7 @@ pub fn setup(
     let pool = ClientPool::new(conns.clone());
     let sessions = SessionService::new(conns.clone(), pool.clone());
     let sftp = SftpService::new(conns.clone(), pool.clone());
+    let rdp = RdpService::new(conns.clone(), pool.clone(), host_keys.clone());
     let workspace = WorkspaceService::new(data_dir.join("workspace.json"));
     let updater = Updater::new(app.package_info().version.to_string());
     app.manage(AppState {
@@ -97,6 +103,7 @@ pub fn setup(
         pool,
         sessions,
         sftp,
+        rdp,
         workspace,
         updater,
     });

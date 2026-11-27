@@ -3,13 +3,15 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::core::rdp::{self, CertQuery, cert::CertStore};
 use crate::core::ssh::known_hosts::HostKeyStore;
 use crate::core::ssh::{DEFAULT_TIMEOUT, DialOptions, HostKeyQuery, TrustFn};
 use crate::error::{self, ApiResult};
 use crate::events::{self, EventSink};
-use crate::model::HostKeyPrompt;
+use crate::model::{ConnKind, HostKeyPrompt};
 use crate::util::new_id;
 
 /// 用户一直不回答时，按拒绝处理。
@@ -20,9 +22,10 @@ struct Prompt {
     answer: Option<oneshot::Sender<bool>>,
 }
 
-/// 管理已信任的主机指纹，以及等待用户确认的请求。终端会话、SFTP、测试连接共用。
+/// 管理已信任的主机指纹和远程桌面证书，以及等待用户确认的请求。终端会话、SFTP、远程桌面、测试连接共用。
 pub struct HostKeyService {
     store: Arc<HostKeyStore>,
+    certs: Arc<CertStore>,
     events: Arc<dyn EventSink>,
     prompts: Mutex<HashMap<String, Prompt>>,
     prompt_timeout: Duration,
@@ -30,17 +33,19 @@ pub struct HostKeyService {
 }
 
 impl HostKeyService {
-    pub fn new(store: HostKeyStore, events: Arc<dyn EventSink>) -> Arc<Self> {
-        Self::with_timeout(store, events, PROMPT_TIMEOUT)
+    pub fn new(store: HostKeyStore, certs: CertStore, events: Arc<dyn EventSink>) -> Arc<Self> {
+        Self::with_timeout(store, certs, events, PROMPT_TIMEOUT)
     }
 
     pub fn with_timeout(
         store: HostKeyStore,
+        certs: CertStore,
         events: Arc<dyn EventSink>,
         prompt_timeout: Duration,
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| HostKeyService {
             store: Arc::new(store),
+            certs: Arc::new(certs),
             events,
             prompts: Mutex::new(HashMap::new()),
             prompt_timeout,
@@ -63,15 +68,54 @@ impl HostKeyService {
         }
     }
 
+    /// 连接远程桌面 conn_id 时使用的参数；证书未知或变化时弹窗询问。
+    pub fn rdp_options(&self, conn_id: &str, conn_name: &str) -> rdp::DialOptions {
+        let me = self.me.clone();
+        let (id, name) = (conn_id.to_string(), conn_name.to_string());
+        let trust: rdp::TrustFn = Arc::new(move |q: CertQuery| {
+            let me = me.clone();
+            let info = HostKeyPrompt {
+                request_id: new_id(),
+                kind: ConnKind::Rdp,
+                conn_id: id.clone(),
+                conn_name: name.clone(),
+                host: q.host,
+                key_type: q.subject,
+                fingerprint: q.fingerprint,
+                previous: q.previous,
+            };
+            Box::pin(async move {
+                match me.upgrade() {
+                    Some(svc) => svc.ask(info, q.cancel).await,
+                    None => false,
+                }
+            })
+        });
+        rdp::DialOptions {
+            certs: self.certs.clone(),
+            trust: Some(trust),
+            timeout: rdp::DEFAULT_TIMEOUT,
+        }
+    }
+
     fn trust_fn(&self, conn_id: &str, conn_name: &str) -> TrustFn {
         let me = self.me.clone();
         let (id, name) = (conn_id.to_string(), conn_name.to_string());
         Arc::new(move |q: HostKeyQuery| {
             let me = me.clone();
-            let (id, name) = (id.clone(), name.clone());
+            let info = HostKeyPrompt {
+                request_id: new_id(),
+                kind: ConnKind::Ssh,
+                conn_id: id.clone(),
+                conn_name: name.clone(),
+                host: q.host,
+                key_type: q.key_type,
+                fingerprint: q.fingerprint,
+                previous: None,
+            };
             Box::pin(async move {
                 match me.upgrade() {
-                    Some(svc) => svc.ask(id, name, q).await,
+                    Some(svc) => svc.ask(info, q.cancel).await,
                     None => false,
                 }
             })
@@ -79,15 +123,7 @@ impl HostKeyService {
     }
 
     /// 推送指纹给前端确认，用户回答前一直挂起握手。
-    async fn ask(&self, conn_id: String, conn_name: String, q: HostKeyQuery) -> bool {
-        let info = HostKeyPrompt {
-            request_id: new_id(),
-            conn_id,
-            conn_name,
-            host: q.host,
-            key_type: q.key_type,
-            fingerprint: q.fingerprint,
-        };
+    async fn ask(&self, info: HostKeyPrompt, cancel: CancellationToken) -> bool {
         let (tx, rx) = oneshot::channel();
         let rid = info.request_id.clone();
         self.prompts.lock().unwrap().insert(
@@ -107,7 +143,7 @@ impl HostKeyService {
 
         let ok = tokio::select! {
             r = rx => r.unwrap_or(false),
-            _ = q.cancel.cancelled() => false,
+            _ = cancel.cancelled() => false,
             _ = tokio::time::sleep(self.prompt_timeout) => {
                 warn!(conn = %info.conn_name, "主机指纹确认超时");
                 false

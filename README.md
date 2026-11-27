@@ -2,7 +2,7 @@
 
 # Rain Term
 
-A lightweight SSH client built with Tauri: tabbed terminals, jump hosts and SFTP.
+A lightweight SSH and remote desktop client built with Tauri: tabbed terminals, Windows remote desktop (RDP), jump hosts and SFTP.
 
 Languages: English · [简体中文](./docs/README_zh-CN.md) · [繁體中文](./docs/README_zh-TW.md)
 
@@ -48,7 +48,8 @@ When you run a newer Windows installer over an existing installation, it recomme
   - Correct width for CJK characters and emoji; `vim`, `top` and `htop` render properly. WebGL rendering, with a fallback when WebGL is unavailable.
   - Shows why a session ended and the exit code, with one-click reconnect. Keepalive detects dropped connections.
   - Quick connect with `Ctrl+Shift+K` (`⌘K` on macOS). Tabs from the last session are restored on restart, without connecting automatically.
-- **Jump hosts**: connect through one or more jump hosts. Each hop's fingerprint is verified, and errors tell you which hop failed.
+- **Remote desktop (RDP)**: open Windows remote desktops in tabs with Network Level Authentication. The resolution follows the tab size, text can be copied and pasted both ways, and the toolbar sends `Ctrl+Alt+Del` and the Windows key. Server certificates are confirmed on first connection.
+- **Jump hosts**: connect through one or more jump hosts, for terminals and remote desktops alike. Each hop's fingerprint is verified, and errors tell you which hop failed.
 - **SFTP**
   - Shares the terminal's connection. Browsing stays smooth even in folders with tens of thousands of files.
   - Create folders, rename, delete and copy paths.

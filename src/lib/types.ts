@@ -75,7 +75,7 @@ export interface UpdateInfo {
 
 // ---------- 连接 ----------
 
-export type ConnKind = "ssh";
+export type ConnKind = "ssh" | "rdp";
 export type AuthType = "password" | "key" | "agent";
 
 export interface SshParams {
@@ -96,7 +96,26 @@ export interface SshParams {
   keyPassphrase?: string;
 }
 
-export type ConnParams = SshParams;
+/** 远程桌面的分辨率：跟随标签大小，或固定为 width × height。 */
+export type RdpResolution = "fit" | "fixed";
+
+export interface RdpParams {
+  kind: "rdp";
+  host: string;
+  port: number;
+  user: string;
+  domain?: string;
+  /** 经这个 SSH 连接转发到远程桌面 */
+  jumpId?: string;
+  resolution: RdpResolution;
+  width: number;
+  height: number;
+  /** 和远程桌面共享文本剪贴板 */
+  clipboard: boolean;
+  password?: string;
+}
+
+export type ConnParams = SshParams | RdpParams;
 
 export type Connection = {
   /** 新建时为空字符串 */
@@ -131,12 +150,16 @@ export interface ExportResult {
 /** 首次连接某台服务器时请用户确认指纹。 */
 export interface HostKeyPrompt {
   requestId: string;
+  kind: ConnKind;
   /** 测试尚未保存的连接时为空。 */
   connId: string;
   connName: string;
   host: string;
+  /** SSH 是密钥类型，远程桌面是证书的使用者。 */
   keyType: string;
   fingerprint: string;
+  /** 远程桌面证书变化时，之前信任的指纹。 */
+  previous?: string;
 }
 
 /** 终端会话结束：shell 退出或连接断开（用户主动关闭时不推送）。 */
@@ -198,9 +221,25 @@ export type SftpEvent =
   | { type: "cancelled"; id: string }
   | { type: "closed"; error: I18nMsg };
 
+// ---------- 远程桌面，见 src-tauri/src/service/rdp.rs ----------
+
+/** 会话的 JSON 通知；closed 一定是最后一条，用户主动关闭时不推送。 */
+export type RdpNotice =
+  | { type: "size"; width: number; height: number }
+  | { type: "clipboard"; text: string }
+  | { type: "closed"; error?: I18nMsg };
+
+/** 输入事件，坐标是远程桌面的像素坐标，见 src-tauri/src/core/rdp/input.rs。 */
+export type RdpInput =
+  | { t: "key"; code: string; down: boolean }
+  | { t: "text"; text: string }
+  | { t: "move"; x: number; y: number }
+  | { t: "button"; button: number; down: boolean }
+  | { t: "wheel"; vertical: boolean; units: number };
+
 // ---------- 工作区 ----------
 
-export type TabKind = "term" | "sftp";
+export type TabKind = "term" | "sftp" | "rdp";
 
 export interface WorkspaceTab {
   connId: string;

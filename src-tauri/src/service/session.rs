@@ -17,7 +17,6 @@ use crate::core::ssh::shell::{ExitStatus, PtySize, ShellEvent, ShellReader, Shel
 use crate::core::ssh::{SshClient, SshError};
 use crate::error::{self, ApiResult};
 use crate::i18n::Msg;
-use crate::model::ConnParams;
 use crate::util::new_id;
 
 /// 输出攒够这么多字节，或者从第一个字节起等了 FLUSH_INTERVAL，就合并发给前端。
@@ -103,7 +102,7 @@ impl SessionService {
         sink: SessionSink,
     ) -> ApiResult<String> {
         let conn = self.conns.resolve(conn_id)?;
-        let ConnParams::Ssh(p) = &conn.params;
+        let p = conn.ssh_params().map_err(|m| error::CONN_INVALID.msg(m))?;
         let incognito = p.incognito;
         let size = PtySize {
             cols: size.cols.max(1),

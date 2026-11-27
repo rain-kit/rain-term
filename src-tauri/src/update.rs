@@ -16,7 +16,6 @@ use tracing::{info, warn};
 use crate::app::AppState;
 use crate::core::ssh::proxy::Socks5Proxy;
 use crate::error::{self, ApiError, ApiResult};
-use crate::model::ConnParams;
 use crate::service::pool::{Client, ClientPool};
 use crate::{events, tray, window};
 
@@ -176,7 +175,9 @@ impl Route {
         };
         let st = app.state::<AppState>();
         let conn = st.conns.resolve(id)?;
-        let ConnParams::Ssh(p) = &conn.params;
+        let p = conn
+            .ssh_params()
+            .map_err(|m| error::UPDATE_JUMP_FAILED.msg(m))?;
         let name = conn.name.clone();
         let (client, _) = st.pool.acquire(&conn, p).await.map_err(|e| {
             let reason = e.msg;

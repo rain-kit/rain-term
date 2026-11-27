@@ -2,88 +2,131 @@ import { FolderOpen, PlugZap } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { connApi } from "../lib/api";
 import { loadGroups } from "../lib/groups";
-import { CONN_COLORS, connAddress, DEFAULT_SSH_PORT, KIND_LABEL, type ConnColor } from "../lib/format";
+import { CONN_COLORS, connAddress, DEFAULT_PORT, KIND_LABEL, RDP_MAX_SIZE, RDP_MIN_SIZE, type ConnColor } from "../lib/format";
 import { t, useI18n } from "../lib/i18n";
 import { useConns, useToast } from "../lib/store";
-import type { AuthType, ConnView, SaveConnReq } from "../lib/types";
+import type { AuthType, ConnKind, ConnView, RdpResolution, SaveConnReq } from "../lib/types";
 import KindIcon from "./KindIcon";
 import { Button, cx, Dialog, Field, IconButton, Input, PasswordInput, Segmented, Select, SwitchRow } from "./ui";
 
 interface Form {
+  kind: ConnKind;
   name: string;
   group: string;
   color: string;
   note: string;
   production: boolean;
-  incognito: boolean;
   host: string;
   port: string;
   user: string;
   password: string;
+  jumpId: string;
+  // SSH
+  incognito: boolean;
   auth: AuthType;
   keyPath: string;
   keyPassphrase: string;
-  jumpId: string;
   keepaliveSeconds: string;
   initDir: string;
+  // 远程桌面
+  domain: string;
+  resolution: RdpResolution;
+  width: string;
+  height: string;
+  clipboard: boolean;
 }
 
 type Errors = Partial<Record<keyof Form, string>>;
 
+const DEFAULT_WIDTH = 1920;
+const DEFAULT_HEIGHT = 1080;
+
 function toForm(c?: ConnView | null): Form {
+  const kind = c?.kind ?? "ssh";
+  const ssh = c?.kind === "ssh" ? c : undefined;
+  const rdp = c?.kind === "rdp" ? c : undefined;
   return {
+    kind,
     name: c?.name ?? "",
     group: c?.group ?? "",
     color: c?.color ?? "",
     note: c?.note ?? "",
     production: !!c?.production,
-    incognito: !!c?.incognito,
     host: c?.host ?? "",
-    port: String(c?.port ?? DEFAULT_SSH_PORT),
+    port: String(c?.port ?? DEFAULT_PORT[kind]),
     user: c?.user ?? "",
     password: "",
-    auth: c?.auth ?? "password",
-    keyPath: c?.keyPath ?? "",
-    keyPassphrase: "",
     jumpId: c?.jumpId ?? "",
-    keepaliveSeconds: String(c?.keepaliveSeconds ?? 30),
-    initDir: c?.initDir ?? "",
+    incognito: !!ssh?.incognito,
+    auth: ssh?.auth ?? "password",
+    keyPath: ssh?.keyPath ?? "",
+    keyPassphrase: "",
+    keepaliveSeconds: String(ssh?.keepaliveSeconds ?? 30),
+    initDir: ssh?.initDir ?? "",
+    domain: rdp?.domain ?? "",
+    resolution: rdp?.resolution ?? "fit",
+    width: String(rdp?.width ?? DEFAULT_WIDTH),
+    height: String(rdp?.height ?? DEFAULT_HEIGHT),
+    clipboard: rdp?.clipboard ?? true,
   };
 }
 
 const isInt = (v: string, min: number, max: number) => /^\d+$/.test(v.trim()) && Number(v) >= min && Number(v) <= max;
+const isSize = (v: string) => isInt(v, RDP_MIN_SIZE, RDP_MAX_SIZE);
 
 function validate(f: Form): Errors {
   const e: Errors = {};
   if (!f.host.trim()) e.host = t("editor.required");
   if (!isInt(f.port, 1, 65535)) e.port = t("editor.err.port");
   if (!f.user.trim()) e.user = t("editor.required");
-  if (f.auth === "key" && !f.keyPath.trim()) e.keyPath = t("editor.err.keyPath");
-  if (!isInt(f.keepaliveSeconds, 0, 3600)) e.keepaliveSeconds = t("editor.err.keepalive");
+  if (f.kind === "ssh") {
+    if (f.auth === "key" && !f.keyPath.trim()) e.keyPath = t("editor.err.keyPath");
+    if (!isInt(f.keepaliveSeconds, 0, 3600)) e.keepaliveSeconds = t("editor.err.keepalive");
+  } else if (f.resolution === "fixed") {
+    const msg = t("editor.err.rdpSize", { min: RDP_MIN_SIZE, max: RDP_MAX_SIZE });
+    if (!isSize(f.width)) e.width = msg;
+    if (!isSize(f.height)) e.height = msg;
+  }
   return e;
 }
 
 function toReq(f: Form, id: string, clear: { password: boolean; keyPassphrase: boolean }): SaveConnReq {
-  return {
+  const common = {
     id,
     name: f.name.trim(),
     group: f.group.trim(),
     color: f.color,
     note: f.note.trim(),
     production: f.production,
-    kind: "ssh",
     host: f.host.trim(),
     port: Number(f.port),
     user: f.user.trim(),
+    jumpId: f.jumpId,
+    clearPassword: clear.password,
+  };
+  if (f.kind === "rdp") {
+    return {
+      ...common,
+      kind: "rdp",
+      domain: f.domain.trim(),
+      resolution: f.resolution,
+      // 跟随窗口时宽高不用，填不合法的值也照样保存默认值。
+      width: isSize(f.width) ? Number(f.width) : DEFAULT_WIDTH,
+      height: isSize(f.height) ? Number(f.height) : DEFAULT_HEIGHT,
+      clipboard: f.clipboard,
+      password: f.password,
+    };
+  }
+  return {
+    ...common,
+    kind: "ssh",
     auth: f.auth,
     keyPath: f.auth === "key" ? f.keyPath.trim() : "",
     password: f.auth === "password" ? f.password : "",
     keyPassphrase: f.auth === "key" ? f.keyPassphrase : "",
-    jumpId: f.jumpId,
     keepaliveSeconds: Number(f.keepaliveSeconds),
     initDir: f.initDir.trim(),
     incognito: f.incognito,
-    clearPassword: clear.password,
     clearKeyPassphrase: clear.keyPassphrase,
   };
 }
@@ -185,10 +228,16 @@ export default function ConnEditor({
     setForm((x) => ({ ...x, [k]: v }));
     if (errors[k]) setErrors((e) => ({ ...e, [k]: undefined }));
   };
+  // 切换类型时端口还是原类型的默认值就换成新类型的默认值。
+  const setKind = (kind: ConnKind) => {
+    setForm((x) => ({ ...x, kind, port: x.port.trim() === String(DEFAULT_PORT[x.kind]) ? String(DEFAULT_PORT[kind]) : x.port }));
+    setErrors({});
+  };
+  const rdp = f.kind === "rdp";
 
   const groups = useMemo(() => [...new Set([...loadGroups(), ...conns.map((c) => c.group).filter(Boolean)])] as string[], [conns, open]);
 
-  // 可选的跳板机：编辑时排除自己和跳板链上经过自己的连接，避免成环。
+  // 可选的跳板机：只能是 SSH 连接；编辑时排除自己和跳板链上经过自己的连接，避免成环。
   const jumpOptions = useMemo(() => {
     const byId = new Map(conns.map((c) => [c.id, c]));
     const passesSelf = (id: string) => {
@@ -200,7 +249,7 @@ export default function ConnEditor({
       }
       return false;
     };
-    return conns.filter((c) => !(conn && passesSelf(c.id)));
+    return conns.filter((c) => c.kind === "ssh" && !(conn && passesSelf(c.id)));
   }, [conns, conn]);
 
   const pickKey = async () => {
@@ -253,8 +302,8 @@ export default function ConnEditor({
       onClose={busy ? undefined : onClose}
       title={
         <span className="flex items-center gap-2">
-          <KindIcon kind="ssh" />
-          {t(conn ? "editor.titleEdit" : "editor.titleNew", { kind: KIND_LABEL.ssh })}
+          <KindIcon kind={f.kind} />
+          {t(conn ? "editor.titleEdit" : "editor.titleNew", { kind: KIND_LABEL[f.kind] })}
         </span>
       }
       width="max-w-xl"
@@ -273,6 +322,18 @@ export default function ConnEditor({
         </>
       }
     >
+      {!conn && (
+        <Field label={t("editor.kind")} className="mb-3">
+          <Segmented<ConnKind>
+            value={f.kind}
+            onChange={setKind}
+            options={[
+              { value: "ssh", label: t("editor.kind.ssh") },
+              { value: "rdp", label: t("editor.kind.rdp") },
+            ]}
+          />
+        </Field>
+      )}
       <Row>
         <Field label={t("editor.name")}>
           <Input placeholder={t("editor.namePlaceholder")} value={f.name} onChange={(e) => set("name", e.target.value)} />
@@ -296,64 +357,87 @@ export default function ConnEditor({
             <Input value={f.port} invalid={!!errors.port} onChange={(e) => set("port", e.target.value)} />
           </Field>
         </Row>
-        <Row>
-          <Field label={t("editor.user")} error={errors.user}>
-            <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
-          </Field>
-          <Field label={t("editor.authType")} className="!flex-none">
-            <Segmented<AuthType>
-              value={f.auth}
-              onChange={(v) => set("auth", v)}
-              options={[
-                { value: "password", label: t("editor.auth.password") },
-                { value: "key", label: t("editor.auth.key") },
-                { value: "agent", label: "SSH Agent" },
-              ]}
-            />
-          </Field>
-        </Row>
-        {f.auth === "password" && (
-          <SecretField
-            label={t("editor.password")}
-            saved={!!conn?.hasPassword}
-            cleared={clear.password}
-            value={f.password}
-            onChange={(v) => set("password", v)}
-            onClear={(v) => setClear((c) => ({ ...c, password: v }))}
-          />
-        )}
-        {f.auth === "key" && (
+        {rdp ? (
           <>
-            <Field label={t("editor.keyPath")} error={errors.keyPath}>
-              <Input
-                mono
-                placeholder="~/.ssh/id_ed25519"
-                value={f.keyPath}
-                invalid={!!errors.keyPath}
-                onChange={(e) => set("keyPath", e.target.value)}
-                suffix={
-                  <IconButton label={t("editor.pickFile")} size="sm" type="button" onClick={pickKey}>
-                    <FolderOpen size={15} />
-                  </IconButton>
-                }
-              />
-            </Field>
+            <Row>
+              <Field label={t("editor.user")} error={errors.user} hint={t("editor.rdpUserHint")}>
+                <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
+              </Field>
+              <Field label={t("editor.domain")} hint={t("editor.domainHint")}>
+                <Input value={f.domain} onChange={(e) => set("domain", e.target.value)} />
+              </Field>
+            </Row>
             <SecretField
-              label={t("editor.keyPassphrase")}
-              saved={!!conn?.hasKeyPassphrase}
-              cleared={clear.keyPassphrase}
-              value={f.keyPassphrase}
-              hint={t("editor.keyPassphraseHint")}
-              onChange={(v) => set("keyPassphrase", v)}
-              onClear={(v) => setClear((c) => ({ ...c, keyPassphrase: v }))}
+              label={t("editor.password")}
+              saved={!!conn?.hasPassword}
+              cleared={clear.password}
+              value={f.password}
+              onChange={(v) => set("password", v)}
+              onClear={(v) => setClear((c) => ({ ...c, password: v }))}
             />
           </>
+        ) : (
+          <>
+            <Row>
+              <Field label={t("editor.user")} error={errors.user}>
+                <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
+              </Field>
+              <Field label={t("editor.authType")} className="!flex-none">
+                <Segmented<AuthType>
+                  value={f.auth}
+                  onChange={(v) => set("auth", v)}
+                  options={[
+                    { value: "password", label: t("editor.auth.password") },
+                    { value: "key", label: t("editor.auth.key") },
+                    { value: "agent", label: "SSH Agent" },
+                  ]}
+                />
+              </Field>
+            </Row>
+            {f.auth === "password" && (
+              <SecretField
+                label={t("editor.password")}
+                saved={!!conn?.hasPassword}
+                cleared={clear.password}
+                value={f.password}
+                onChange={(v) => set("password", v)}
+                onClear={(v) => setClear((c) => ({ ...c, password: v }))}
+              />
+            )}
+            {f.auth === "key" && (
+              <>
+                <Field label={t("editor.keyPath")} error={errors.keyPath}>
+                  <Input
+                    mono
+                    placeholder="~/.ssh/id_ed25519"
+                    value={f.keyPath}
+                    invalid={!!errors.keyPath}
+                    onChange={(e) => set("keyPath", e.target.value)}
+                    suffix={
+                      <IconButton label={t("editor.pickFile")} size="sm" type="button" onClick={pickKey}>
+                        <FolderOpen size={15} />
+                      </IconButton>
+                    }
+                  />
+                </Field>
+                <SecretField
+                  label={t("editor.keyPassphrase")}
+                  saved={!!conn?.hasKeyPassphrase}
+                  cleared={clear.keyPassphrase}
+                  value={f.keyPassphrase}
+                  hint={t("editor.keyPassphraseHint")}
+                  onChange={(v) => set("keyPassphrase", v)}
+                  onClear={(v) => setClear((c) => ({ ...c, keyPassphrase: v }))}
+                />
+              </>
+            )}
+            {f.auth === "agent" && <p className="text-xs text-muted">{t("editor.agentHint")}</p>}
+          </>
         )}
-        {f.auth === "agent" && <p className="text-xs text-muted">{t("editor.agentHint")}</p>}
       </Section>
 
       <Section title={t("editor.section.advanced")}>
-        <Field label={t("editor.jump")} hint={jumpOptions.length ? t("editor.jumpHint") : undefined}>
+        <Field label={t("editor.jump")} hint={jumpOptions.length ? t(rdp ? "editor.jumpHintRdp" : "editor.jumpHint") : undefined}>
           <Select
             value={f.jumpId}
             onChange={(v) => set("jumpId", v)}
@@ -365,29 +449,63 @@ export default function ConnEditor({
             ]}
           />
         </Field>
-        <Row>
-          <Field label={t("editor.initDir")}>
-            <Input mono placeholder={t("editor.initDirPlaceholder")} value={f.initDir} onChange={(e) => set("initDir", e.target.value)} />
-          </Field>
-          <Field label={t("editor.keepalive")} error={errors.keepaliveSeconds} hint={t("editor.keepaliveHint")} className="!flex-none w-36">
-            <Input value={f.keepaliveSeconds} invalid={!!errors.keepaliveSeconds} onChange={(e) => set("keepaliveSeconds", e.target.value)} />
-          </Field>
-        </Row>
+        {rdp ? (
+          <Row>
+            <Field label={t("editor.resolution")} className="!flex-none">
+              <Segmented<RdpResolution>
+                value={f.resolution}
+                onChange={(v) => set("resolution", v)}
+                options={[
+                  { value: "fit", label: t("editor.resolution.fit") },
+                  { value: "fixed", label: t("editor.resolution.fixed") },
+                ]}
+              />
+            </Field>
+            {f.resolution === "fixed" && (
+              <>
+                <Field label={t("editor.width")} error={errors.width}>
+                  <Input value={f.width} invalid={!!errors.width} onChange={(e) => set("width", e.target.value)} />
+                </Field>
+                <Field label={t("editor.height")} error={errors.height}>
+                  <Input value={f.height} invalid={!!errors.height} onChange={(e) => set("height", e.target.value)} />
+                </Field>
+              </>
+            )}
+          </Row>
+        ) : (
+          <Row>
+            <Field label={t("editor.initDir")}>
+              <Input mono placeholder={t("editor.initDirPlaceholder")} value={f.initDir} onChange={(e) => set("initDir", e.target.value)} />
+            </Field>
+            <Field label={t("editor.keepalive")} error={errors.keepaliveSeconds} hint={t("editor.keepaliveHint")} className="!flex-none w-36">
+              <Input value={f.keepaliveSeconds} invalid={!!errors.keepaliveSeconds} onChange={(e) => set("keepaliveSeconds", e.target.value)} />
+            </Field>
+          </Row>
+        )}
       </Section>
 
       <Section title={t("editor.section.other")}>
         <SwitchRow
           title={t("editor.production")}
-          desc={t("editor.productionDesc")}
+          desc={t(rdp ? "editor.productionDescRdp" : "editor.productionDesc")}
           checked={f.production}
           onChange={(v) => set("production", v)}
         />
-        <SwitchRow
-          title={t("editor.incognito")}
-          desc={t("editor.incognitoDesc")}
-          checked={f.incognito}
-          onChange={(v) => set("incognito", v)}
-        />
+        {rdp ? (
+          <SwitchRow
+            title={t("editor.clipboard")}
+            desc={t("editor.clipboardDesc")}
+            checked={f.clipboard}
+            onChange={(v) => set("clipboard", v)}
+          />
+        ) : (
+          <SwitchRow
+            title={t("editor.incognito")}
+            desc={t("editor.incognitoDesc")}
+            checked={f.incognito}
+            onChange={(v) => set("incognito", v)}
+          />
+        )}
         <div className="flex flex-col gap-1">
           <span className="text-xs font-medium text-muted">{t("editor.color")}</span>
           <div className="flex items-center gap-2 py-1">

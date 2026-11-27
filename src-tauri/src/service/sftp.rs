@@ -24,7 +24,6 @@ use super::pool::{Client, ClientPool};
 use crate::core::ssh::sftp::{describe, is_not_found};
 use crate::error::{self, ApiError, ApiResult};
 use crate::i18n::Msg;
-use crate::model::ConnParams;
 use crate::util::new_id;
 
 const BUF_SIZE: usize = 256 * 1024;
@@ -191,7 +190,7 @@ impl SftpService {
     /// 打开 SFTP 面板；传输进度和断开通知从 sink 推出。
     pub async fn open(self: &Arc<Self>, conn_id: &str, sink: SftpSink) -> ApiResult<Opened> {
         let conn = self.conns.resolve(conn_id)?;
-        let ConnParams::Ssh(p) = &conn.params;
+        let p = conn.ssh_params().map_err(|m| error::CONN_INVALID.msg(m))?;
 
         // 复用的连接可能刚断开、还没被发现，这时重新连接再试一次。
         let mut retry = true;
