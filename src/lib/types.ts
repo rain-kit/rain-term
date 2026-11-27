@@ -221,6 +221,45 @@ export type SftpEvent =
   | { type: "cancelled"; id: string }
   | { type: "closed"; error: I18nMsg };
 
+// ---------- 服务器监控，见 src-tauri/src/service/monitor.rs ----------
+
+export interface ProcInfo {
+  pid: number;
+  name: string;
+  /** 100 表示占满一个核；刚打开、还没有上一次采集时没有。 */
+  cpu?: number;
+  /** 常驻内存，字节。 */
+  mem: number;
+}
+
+/** 容量都是字节，网络是每秒的字节数。 */
+export interface ServerStats {
+  /** 总的 CPU 使用率 0 ~ 100；第一次采集时没有。 */
+  cpu?: number;
+  cores: number;
+  /** 1、5、15 分钟的平均负载。 */
+  load: [number, number, number];
+  memTotal: number;
+  memUsed: number;
+  swapTotal: number;
+  swapUsed: number;
+  /** 根分区。 */
+  disk?: { total: number; used: number; avail: number };
+  net?: { rx: number; tx: number };
+  /** 开机时长，秒。 */
+  uptime: number;
+  /** 按 CPU 和按内存各自最高的几个进程。 */
+  procs: ProcInfo[];
+}
+
+/** unsupported（不是 Linux）一定是最后一条；failed 后下个周期会再试。 */
+export type MonitorEvent = ({ type: "stats" } & ServerStats) | { type: "unsupported" } | { type: "failed"; error: I18nMsg };
+
+export type ProcSort = "cpu" | "mem";
+
+/** 服务器状态面板在终端的右侧还是下方。 */
+export type MonitorPosition = "right" | "bottom";
+
 // ---------- 远程桌面，见 src-tauri/src/service/rdp.rs ----------
 
 /** 会话的 JSON 通知；closed 一定是最后一条，用户主动关闭时不推送。 */

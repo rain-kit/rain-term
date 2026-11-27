@@ -65,6 +65,8 @@ pub fn run() {
             commands::ssh::session_ack,
             commands::ssh::session_close,
             commands::ssh::session_close_all,
+            commands::monitor::monitor_open,
+            commands::monitor::monitor_close,
             commands::rdp::rdp_open,
             commands::rdp::rdp_input,
             commands::rdp::rdp_ctrl_alt_del,

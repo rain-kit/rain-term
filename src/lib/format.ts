@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import type { ConnKind, Connection, TabKind } from "./types";
 
 export const isMac = navigator.userAgent.includes("Mac");
@@ -61,6 +62,22 @@ export function formatBytes(n: number): string {
     i++;
   }
   return i === 0 ? `${n} B` : `${n.toFixed(1)} ${units[i]}`;
+}
+
+/** 每秒的字节数：1536 → 1.5 KB/s。 */
+export const formatRate = (n: number) => t("monitor.rate", { value: formatBytes(n) });
+
+/** 12.345 → 12.3%；100 以上不保留小数。 */
+export const formatPercent = (n: number) => `${n >= 100 ? Math.round(n) : n.toFixed(1)}%`;
+
+/** 开机时长（秒）→ 3 天 4 小时、5 小时 6 分、7 分钟。 */
+export function formatUptime(secs: number): string {
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return t("monitor.uptimeDays", { d, h });
+  if (h > 0) return t("monitor.uptimeHours", { h, m });
+  return t("monitor.uptimeMinutes", { m });
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");

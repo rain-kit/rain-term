@@ -7,6 +7,7 @@ import type {
   HostKeyPrompt,
   I18nMsg,
   LogEntry,
+  MonitorEvent,
   RdpInput,
   RdpNotice,
   SaveConnReq,
@@ -124,6 +125,16 @@ export const sftpApi = {
   pickUploadFiles: () => invoke<string[]>("pick_upload_files"),
   /** 取消时返回空字符串。 */
   pickDownloadDir: (defaultDir?: string) => invoke<string>("pick_download_dir", { defaultDir }),
+};
+
+/** 服务器监控，见 src-tauri/src/service/monitor.rs。只用终端已建立的 SSH 连接，不会新建连接。 */
+export const monitorApi = {
+  open: (connId: string, onEvent: (e: MonitorEvent) => void) => {
+    const ch = new Channel<MonitorEvent>();
+    ch.onmessage = onEvent;
+    return invoke<string>("monitor_open", { connId, onEvent: ch });
+  },
+  close: (id: string) => invoke<void>("monitor_close", { id }),
 };
 
 /** 远程桌面，见 src-tauri/src/service/rdp.rs。 */

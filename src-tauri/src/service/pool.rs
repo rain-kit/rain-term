@@ -118,6 +118,12 @@ impl ClientPool {
         Ok((client, false))
     }
 
+    /// 取得连接已建立的 SSH 客户端，没有可用的时返回 None，不新建连接。
+    /// 取到后同样必须调用 [`ClientPool::release`]。
+    pub fn existing(&self, conn_id: &str) -> Option<Arc<Client>> {
+        self.reuse(conn_id)
+    }
+
     fn reuse(&self, conn_id: &str) -> Option<Arc<Client>> {
         let mut clients = self.clients.lock().unwrap();
         let shared = clients.get_mut(conn_id)?;

@@ -409,6 +409,32 @@ impl SshClient {
         Ok(())
     }
 
+    /// 在一条一次性 channel 上执行命令，把 input 写到它的标准输入，等命令结束后返回标准输出。
+    /// 输出超过 limit 字节的部分丢弃；标准错误丢弃。
+    pub async fn exec_output(
+        &self,
+        command: &str,
+        input: &[u8],
+        limit: usize,
+    ) -> Result<Vec<u8>, SshError> {
+        let mut channel = self.handle.channel_open_session().await?;
+        channel.exec(false, command.as_bytes()).await?;
+        channel.data(input).await?;
+        channel.eof().await?;
+        let mut out = Vec::new();
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                russh::ChannelMsg::Data { data } => {
+                    let n = data.len().min(limit - out.len());
+                    out.extend_from_slice(&data[..n]);
+                }
+                russh::ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
     /// 通过 direct-tcpip 让服务器连接 t，在这条 channel 上建立到 t 的 SSH 连接；jump 是本连接在提示里的名称。
     /// 返回的连接持有本连接，关闭时一起关闭。
     pub async fn connect_via(

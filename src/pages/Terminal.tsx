@@ -1,7 +1,8 @@
-import { CopyPlus, FolderOpen, Monitor, PlugZap, SquareTerminal, X, type LucideIcon } from "lucide-react";
+import { Activity, CopyPlus, FolderOpen, Monitor, PlugZap, SquareTerminal, X, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConnList from "../components/ConnList";
 import ModeLayout from "../components/ModeLayout";
+import MonitorPanel from "../components/MonitorPanel";
 import QuickConnect from "../components/QuickConnect";
 import RdpView from "../components/RdpView";
 import SftpPanel from "../components/SftpPanel";
@@ -12,11 +13,15 @@ import { events, workspaceApi } from "../lib/api";
 import { defaultTab, isIncognito } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useConns, useSettings } from "../lib/store";
-import type { ConnView, TabKind } from "../lib/types";
+import type { ConnView, MonitorPosition, TabKind } from "../lib/types";
 import type { MessageKey } from "../locales/zh-CN";
 
 /** 与后端 service/workspace.rs 的 MAX_RECENT 一致。 */
 const MAX_RECENT = 20;
+/** 是否显示服务器状态，默认显示。 */
+const MONITOR_KEY = "monitor.visible";
+/** 服务器状态在右侧还是下方，默认右侧。 */
+const POSITION_KEY = "monitor.position";
 
 interface Tab {
   key: string;
@@ -60,7 +65,21 @@ export default function Terminal({
   const [closing, setClosing] = useState<Tab[]>([]);
   const [recent, setRecent] = useState<string[]>([]);
   const [restored, setRestored] = useState(false);
+  const [monitor, setMonitor] = useState(() => localStorage.getItem(MONITOR_KEY) !== "0");
   const seq = useRef(0);
+
+  const [position, setPosition] = useState<MonitorPosition>(() =>
+    localStorage.getItem(POSITION_KEY) === "bottom" ? "bottom" : "right",
+  );
+
+  const showMonitor = (v: boolean) => {
+    setMonitor(v);
+    localStorage.setItem(MONITOR_KEY, v ? "1" : "0");
+  };
+  const moveMonitor = (p: MonitorPosition) => {
+    setPosition(p);
+    localStorage.setItem(POSITION_KEY, p);
+  };
 
   const names = useMemo(() => new Map(conns.map((c) => [c.id, c.name])), [conns]);
   const production = useMemo(() => new Set(conns.filter((c) => c.production).map((c) => c.id)), [conns]);
@@ -231,60 +250,84 @@ export default function Terminal({
               menu={tabMenu}
               actions={
                 current?.kind === "term" && (
-                  <IconButton
-                    label={t("sftp.openForTab")}
-                    size="sm"
-                    onClick={() => open({ id: current.connId, name: names.get(current.connId) ?? current.name }, "sftp")}
-                  >
-                    <FolderOpen size={15} />
-                  </IconButton>
+                  <>
+                    <IconButton
+                      label={t(monitor ? "monitor.hide" : "monitor.show")}
+                      size="sm"
+                      className={cx(monitor && "bg-accent/12 text-accent")}
+                      onClick={() => showMonitor(!monitor)}
+                    >
+                      <Activity size={15} />
+                    </IconButton>
+                    <IconButton
+                      label={t("sftp.openForTab")}
+                      size="sm"
+                      onClick={() => open({ id: current.connId, name: names.get(current.connId) ?? current.name }, "sftp")}
+                    >
+                      <FolderOpen size={15} />
+                    </IconButton>
+                  </>
                 )
               }
             />
-            {tabs.map((x) => (
-              <div key={x.key} className={cx("flex min-h-0 flex-1 flex-col", x.key !== active && "hidden")}>
-                {x.status === "idle" ? (
-                  <div className="flex flex-1 flex-col justify-center overflow-y-auto px-6">
-                    <Empty
-                      icon={<TabIcon kind={x.kind} size={22} />}
-                      title={title(x)}
-                      desc={t("terminal.idleDesc")}
-                      action={
-                        <Button variant="primary" icon={<PlugZap size={14} />} onClick={() => connect(x)}>
-                          {t("terminal.connect")}
-                        </Button>
-                      }
-                    />
+            <div className={cx("flex min-h-0 flex-1", position === "bottom" && "flex-col")}>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                {tabs.map((x) => (
+                  <div key={x.key} className={cx("flex min-h-0 flex-1 flex-col", x.key !== active && "hidden")}>
+                    {x.status === "idle" ? (
+                      <div className="flex flex-1 flex-col justify-center overflow-y-auto px-6">
+                        <Empty
+                          icon={<TabIcon kind={x.kind} size={22} />}
+                          title={title(x)}
+                          desc={t("terminal.idleDesc")}
+                          action={
+                            <Button variant="primary" icon={<PlugZap size={14} />} onClick={() => connect(x)}>
+                              {t("terminal.connect")}
+                            </Button>
+                          }
+                        />
+                      </div>
+                    ) : x.kind === "term" ? (
+                      <TerminalView
+                        connId={x.connId}
+                        name={title(x)}
+                        active={x.key === active}
+                        production={production.has(x.connId)}
+                        incognito={incognito.has(x.connId)}
+                        onStatus={(s) => update(x.key, { status: s })}
+                      />
+                    ) : x.kind === "rdp" ? (
+                      <RdpView
+                        connId={x.connId}
+                        name={title(x)}
+                        active={x.key === active}
+                        fit={rdpOf(x.connId)?.resolution !== "fixed"}
+                        clipboard={rdpOf(x.connId)?.clipboard ?? true}
+                        onStatus={(s) => update(x.key, { status: s })}
+                      />
+                    ) : (
+                      <SftpPanel
+                        connId={x.connId}
+                        name={title(x)}
+                        active={x.key === active}
+                        onStatus={(s) => update(x.key, { status: s })}
+                        onBusy={(n) => update(x.key, { busy: n })}
+                      />
+                    )}
                   </div>
-                ) : x.kind === "term" ? (
-                  <TerminalView
-                    connId={x.connId}
-                    name={title(x)}
-                    active={x.key === active}
-                    production={production.has(x.connId)}
-                    incognito={incognito.has(x.connId)}
-                    onStatus={(s) => update(x.key, { status: s })}
-                  />
-                ) : x.kind === "rdp" ? (
-                  <RdpView
-                    connId={x.connId}
-                    name={title(x)}
-                    active={x.key === active}
-                    fit={rdpOf(x.connId)?.resolution !== "fixed"}
-                    clipboard={rdpOf(x.connId)?.clipboard ?? true}
-                    onStatus={(s) => update(x.key, { status: s })}
-                  />
-                ) : (
-                  <SftpPanel
-                    connId={x.connId}
-                    name={title(x)}
-                    active={x.key === active}
-                    onStatus={(s) => update(x.key, { status: s })}
-                    onBusy={(n) => update(x.key, { busy: n })}
-                  />
-                )}
+                ))}
               </div>
-            ))}
+              {monitor && current?.kind === "term" && current.status !== "idle" && (
+                <MonitorPanel
+                  key={current.key}
+                  connId={current.connId}
+                  connected={current.status === "connected"}
+                  position={position}
+                  onPosition={moveMonitor}
+                  onClose={() => showMonitor(false)}
+                />
+              )}
+            </div>
             <Confirm
               open={closing.length > 0}
               title={t(closeOne ? CLOSE_TITLE[closeOne.kind] : "terminal.closeManyTitle")}

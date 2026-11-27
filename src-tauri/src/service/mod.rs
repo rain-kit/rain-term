@@ -2,6 +2,7 @@ pub mod conn;
 mod finalshell;
 pub mod hostkey;
 mod mobaxterm;
+pub mod monitor;
 pub mod pool;
 pub mod rdp;
 pub mod session;

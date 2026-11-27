@@ -108,6 +108,8 @@ pub const SSH_CONNECT_FAILED: Code = Code(300001, "err.sshConnectFailed", "SSH �
 pub const HOST_KEY_EXPIRED: Code = Code(300002, "err.hostKeyExpired", "指纹确认请求已过期");
 pub const SESSION_NOT_FOUND: Code = Code(300004, "err.sessionNotFound", "终端会话不存在或已关闭");
 pub const SESSION_WRITE_FAILED: Code = Code(300005, "err.sessionWriteFailed", "发送到终端失败");
+pub const MONITOR_NOT_CONNECTED: Code =
+    Code(300006, "err.monitorNotConnected", "连接尚未建立，无法读取服务器状态");
 
 // -------------------- SFTP 400000 -------------------- //
 pub const SFTP_OPEN_FAILED: Code = Code(400001, "err.sftpOpenFailed", "打开 SFTP 失败");

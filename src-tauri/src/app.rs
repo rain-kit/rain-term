@@ -12,6 +12,7 @@ use crate::logging::LevelHandle;
 use crate::secrets::{KeyringBackend, Secrets};
 use crate::service::conn::ConnService;
 use crate::service::hostkey::HostKeyService;
+use crate::service::monitor::MonitorService;
 use crate::service::pool::ClientPool;
 use crate::service::rdp::RdpService;
 use crate::service::session::SessionService;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub sessions: Arc<SessionService>,
     pub sftp: Arc<SftpService>,
     pub rdp: Arc<RdpService>,
+    pub monitor: Arc<MonitorService>,
     pub workspace: WorkspaceService,
     pub updater: Updater,
 }
@@ -40,11 +42,12 @@ impl AppState {
         self.data_dir.join("logs")
     }
 
-    /// 关闭全部终端会话、SFTP 面板、远程桌面和 SSH 连接。
+    /// 关闭全部终端会话、SFTP 面板、远程桌面、服务器监控和 SSH 连接。
     pub fn close_all(&self) {
         self.sessions.close_all();
         self.sftp.close_all();
         self.rdp.close_all();
+        self.monitor.close_all();
         self.pool.close_all();
     }
 }
@@ -92,6 +95,7 @@ pub fn setup(
     let sessions = SessionService::new(conns.clone(), pool.clone());
     let sftp = SftpService::new(conns.clone(), pool.clone());
     let rdp = RdpService::new(conns.clone(), pool.clone(), host_keys.clone());
+    let monitor = MonitorService::new(conns.clone(), pool.clone());
     let workspace = WorkspaceService::new(data_dir.join("workspace.json"));
     let updater = Updater::new(app.package_info().version.to_string());
     app.manage(AppState {
@@ -104,6 +108,7 @@ pub fn setup(
         sessions,
         sftp,
         rdp,
+        monitor,
         workspace,
         updater,
     });
