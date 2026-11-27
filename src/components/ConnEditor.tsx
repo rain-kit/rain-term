@@ -2,7 +2,7 @@ import { FolderOpen, PlugZap } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { connApi } from "../lib/api";
 import { loadGroups } from "../lib/groups";
-import { CONN_COLORS, connAddress, DEFAULT_PORT, KIND_LABEL, RDP_MAX_SIZE, RDP_MIN_SIZE, type ConnColor } from "../lib/format";
+import { CONN_COLORS, connAddress, DEFAULT_PORT, DEFAULT_USER, KIND_LABEL, RDP_MAX_SIZE, RDP_MIN_SIZE, type ConnColor } from "../lib/format";
 import { t, useI18n } from "../lib/i18n";
 import { useConns, useToast } from "../lib/store";
 import type { AuthType, ConnKind, ConnView, RdpResolution, SaveConnReq } from "../lib/types";
@@ -54,7 +54,7 @@ function toForm(c?: ConnView | null): Form {
     production: !!c?.production,
     host: c?.host ?? "",
     port: String(c?.port ?? DEFAULT_PORT[kind]),
-    user: c?.user ?? "",
+    user: c?.user ?? DEFAULT_USER[kind],
     password: "",
     jumpId: c?.jumpId ?? "",
     incognito: !!ssh?.incognito,
@@ -244,9 +244,14 @@ export default function ConnEditor({
     setForm((x) => ({ ...x, [k]: v }));
     if (errors[k]) setErrors((e) => ({ ...e, [k]: undefined }));
   };
-  // 切换类型时端口还是原类型的默认值就换成新类型的默认值。
+  // 切换类型时端口、用户名还是原类型的默认值就换成新类型的默认值。
   const setKind = (kind: ConnKind) => {
-    setForm((x) => ({ ...x, kind, port: x.port.trim() === String(DEFAULT_PORT[x.kind]) ? String(DEFAULT_PORT[kind]) : x.port }));
+    setForm((x) => ({
+      ...x,
+      kind,
+      port: x.port.trim() === String(DEFAULT_PORT[x.kind]) ? String(DEFAULT_PORT[kind]) : x.port,
+      user: x.user.trim() === DEFAULT_USER[x.kind] ? DEFAULT_USER[kind] : x.user,
+    }));
     setErrors({});
   };
   const rdp = f.kind === "rdp";

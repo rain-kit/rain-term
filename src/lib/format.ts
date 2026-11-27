@@ -11,6 +11,7 @@ export const KIND_LABEL: Record<ConnKind, string> = { ssh: "SSH", rdp: "RDP" };
 
 export const DEFAULT_SSH_PORT = 22;
 export const DEFAULT_PORT: Record<ConnKind, number> = { ssh: DEFAULT_SSH_PORT, rdp: 3389 };
+export const DEFAULT_USER: Record<ConnKind, string> = { ssh: "", rdp: "Administrator" };
 
 /** 与后端 model.rs 的 RDP_MIN_SIZE、RDP_MAX_SIZE 一致。 */
 export const RDP_MIN_SIZE = 200;
