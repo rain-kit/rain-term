@@ -30,7 +30,6 @@ interface Form {
   initDir: string;
   sftpSudo: SftpSudo;
   // 远程桌面
-  domain: string;
   resolution: RdpResolution;
   width: string;
   height: string;
@@ -65,7 +64,6 @@ function toForm(c?: ConnView | null): Form {
     keepaliveSeconds: String(ssh?.keepaliveSeconds ?? 30),
     initDir: ssh?.initDir ?? "",
     sftpSudo: ssh?.sftpSudo ?? "default",
-    domain: rdp?.domain ?? "",
     resolution: rdp?.resolution ?? "fit",
     width: String(rdp?.width ?? DEFAULT_WIDTH),
     height: String(rdp?.height ?? DEFAULT_HEIGHT),
@@ -92,7 +90,7 @@ function validate(f: Form): Errors {
   return e;
 }
 
-function toReq(f: Form, id: string, clear: { password: boolean; keyPassphrase: boolean }): SaveConnReq {
+function toReq(f: Form, id: string): SaveConnReq {
   const common = {
     id,
     name: f.name.trim(),
@@ -104,13 +102,11 @@ function toReq(f: Form, id: string, clear: { password: boolean; keyPassphrase: b
     port: Number(f.port),
     user: f.user.trim(),
     jumpId: f.jumpId,
-    clearPassword: clear.password,
   };
   if (f.kind === "rdp") {
     return {
       ...common,
       kind: "rdp",
-      domain: f.domain.trim(),
       resolution: f.resolution,
       // 跟随窗口时宽高不用，填不合法的值也照样保存默认值。
       width: isSize(f.width) ? Number(f.width) : DEFAULT_WIDTH,
@@ -130,7 +126,6 @@ function toReq(f: Form, id: string, clear: { password: boolean; keyPassphrase: b
     initDir: f.initDir.trim(),
     sftpSudo: f.sftpSudo,
     incognito: f.incognito,
-    clearKeyPassphrase: clear.keyPassphrase,
   };
 }
 
@@ -145,65 +140,46 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 const Row = ({ children }: { children: ReactNode }) => <div className="flex gap-3 [&>*]:flex-1">{children}</div>;
 
-/** 密码输入框：已保存的密码显示为“已保存”，留空表示不修改，也可以标记为保存时删除。 */
+/** 密码输入框：已保存的密码显示为“已保存”，留空表示不修改。 */
 function SecretField({
   label,
   saved,
-  cleared,
   value,
   hint,
   revealing,
   revealed,
   onChange,
-  onClear,
   onReveal,
 }: {
   label: string;
   saved: boolean;
-  cleared: boolean;
   value: string;
   hint?: string;
   revealing?: boolean;
   revealed?: boolean;
   onChange: (v: string) => void;
-  onClear: (v: boolean) => void;
   /** 不传时不能查看保存的密码。 */
   onReveal?: () => void;
 }) {
   const { t } = useI18n();
   const link = "ml-1.5 text-accent hover:underline disabled:opacity-50 disabled:no-underline";
   const savedHint = saved ? (
-    cleared ? (
-      <>
-        {t("editor.secretWillClear")}
-        <button type="button" className={link} onClick={() => onClear(false)}>
-          {t("editor.secretUndo")}
+    <>
+      {t("editor.secretSaved")}
+      {onReveal && !value && (
+        <button type="button" className={link} disabled={revealing} onClick={onReveal}>
+          {t(revealing ? "editor.secretRevealing" : "editor.secretReveal")}
         </button>
-      </>
-    ) : (
-      <>
-        {t("editor.secretSaved")}
-        {onReveal && !value && (
-          <button type="button" className={link} disabled={revealing} onClick={onReveal}>
-            {t(revealing ? "editor.secretRevealing" : "editor.secretReveal")}
-          </button>
-        )}
-        <button type="button" className={link} onClick={() => onClear(true)}>
-          {t("editor.secretClear")}
-        </button>
-      </>
-    )
+      )}
+    </>
   ) : null;
   return (
     <Field label={label} hint={savedHint ?? hint}>
       <PasswordInput
         revealed={revealed}
         value={value}
-        placeholder={saved && !cleared ? "••••••••" : undefined}
-        onChange={(e) => {
-          onChange(e.target.value);
-          if (e.target.value) onClear(false);
-        }}
+        placeholder={saved ? "••••••••" : undefined}
+        onChange={(e) => onChange(e.target.value)}
       />
     </Field>
   );
@@ -228,7 +204,6 @@ export default function ConnEditor({
   const { settings } = useSettings();
   const [form, setForm] = useState<Form>(() => toForm(conn));
   const [errors, setErrors] = useState<Errors>({});
-  const [clear, setClear] = useState({ password: false, keyPassphrase: false });
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [revealing, setRevealing] = useState(false);
   const [revealed, setRevealed] = useState(false);
@@ -239,7 +214,6 @@ export default function ConnEditor({
     if (!conn && group) next.group = group;
     setForm(next);
     setErrors({});
-    setClear({ password: false, keyPassphrase: false });
     setRevealed(false);
   }, [open, conn, group]);
 
@@ -314,7 +288,7 @@ export default function ConnEditor({
     if (!check()) return;
     setBusy("save");
     try {
-      await connApi.save(toReq(f, conn?.id ?? "", clear));
+      await connApi.save(toReq(f, conn?.id ?? ""));
       toast.success(t(conn ? "editor.saved" : "editor.created"));
       onClose();
     } catch (e) {
@@ -328,7 +302,7 @@ export default function ConnEditor({
     if (!check()) return;
     setBusy("test");
     try {
-      const r = await connApi.test(toReq(f, conn?.id ?? "", clear));
+      const r = await connApi.test(toReq(f, conn?.id ?? ""));
       toast.success(
         r.serverVersion ? t("editor.testOkVersion", { ms: r.elapsedMs, version: r.serverVersion }) : t("editor.testOk", { ms: r.elapsedMs }),
       );
@@ -402,23 +376,16 @@ export default function ConnEditor({
         </Row>
         {rdp ? (
           <>
-            <Row>
-              <Field label={t("editor.user")} error={errors.user} hint={t("editor.rdpUserHint")}>
-                <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
-              </Field>
-              <Field label={t("editor.domain")} hint={t("editor.domainHint")}>
-                <Input value={f.domain} onChange={(e) => set("domain", e.target.value)} />
-              </Field>
-            </Row>
+            <Field label={t("editor.user")} error={errors.user} hint={t("editor.rdpUserHint")}>
+              <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
+            </Field>
             <SecretField
               label={t("editor.password")}
               saved={!!conn?.hasPassword}
-              cleared={clear.password}
               value={f.password}
               revealing={revealing}
               revealed={revealed}
               onChange={(v) => set("password", v)}
-              onClear={(v) => setClear((c) => ({ ...c, password: v }))}
               onReveal={canReveal ? reveal : undefined}
             />
           </>
@@ -444,12 +411,10 @@ export default function ConnEditor({
               <SecretField
                 label={t("editor.password")}
                 saved={!!conn?.hasPassword}
-                cleared={clear.password}
                 value={f.password}
                 revealing={revealing}
                 revealed={revealed}
                 onChange={(v) => set("password", v)}
-                onClear={(v) => setClear((c) => ({ ...c, password: v }))}
                 onReveal={canReveal ? reveal : undefined}
               />
             )}
@@ -472,11 +437,9 @@ export default function ConnEditor({
                 <SecretField
                   label={t("editor.keyPassphrase")}
                   saved={!!conn?.hasKeyPassphrase}
-                  cleared={clear.keyPassphrase}
                   value={f.keyPassphrase}
                   hint={t("editor.keyPassphraseHint")}
                   onChange={(v) => set("keyPassphrase", v)}
-                  onClear={(v) => setClear((c) => ({ ...c, keyPassphrase: v }))}
                 />
               </>
             )}

@@ -77,7 +77,6 @@ pub struct RdpTarget {
     pub host: String,
     pub port: u16,
     pub user: String,
-    pub domain: String,
     pub password: String,
     pub width: u16,
     pub height: u16,
@@ -93,7 +92,6 @@ impl RdpTarget {
             host: p.host.clone(),
             port: p.port as u16,
             user: p.user.clone(),
-            domain: p.domain.clone(),
             password: p.password.clone(),
             width: clamp_size(width) & !1,
             height: clamp_size(height),
@@ -106,15 +104,16 @@ impl RdpTarget {
         join_host_port(&self.host, self.port)
     }
 
-    /// 用户名可以写成 `域\用户`，没有单独填域时从中拆出。
+    /// 用户名写成 `域\用户` 时拆开传给协议。`用户@域` 整段作为 UPN，不再另传域。
     fn credentials(&self) -> (String, Option<String>) {
-        if self.domain.is_empty()
-            && let Some((domain, user)) = self.user.split_once('\\')
-        {
-            return (user.to_string(), Some(domain.to_string()));
+        if let Some((domain, user)) = self.user.split_once('\\') {
+            let domain = domain.trim();
+            let user = user.trim();
+            if !domain.is_empty() && !user.is_empty() {
+                return (user.to_string(), Some(domain.to_string()));
+            }
         }
-        let domain = (!self.domain.is_empty()).then(|| self.domain.clone());
-        (self.user.clone(), domain)
+        (self.user.clone(), None)
     }
 
     fn config(&self) -> Config {
@@ -517,11 +516,9 @@ fn connector_error(e: &ConnectorError) -> RdpError {
             }
             _ => msg!("err.rdp.negotiationFailed", "与服务器协商安全协议失败").with_cause(cause),
         },
-        ConnectorErrorKind::Credssp(_) => msg!(
-            "err.rdp.authFailed",
-            "身份验证失败，请检查用户名、密码和域"
-        )
-        .with_cause(cause),
+        ConnectorErrorKind::Credssp(_) => {
+            msg!("err.rdp.authFailed", "身份验证失败，请检查用户名和密码").with_cause(cause)
+        }
         ConnectorErrorKind::AccessDenied => {
             msg!("err.rdp.accessDenied", "该用户没有远程登录这台计算机的权限")
         }
@@ -545,12 +542,11 @@ mod tests {
         assert_eq!((t.width, t.height, t.scale), (1280, 200, 100));
         assert_eq!(t.credentials(), ("alice".into(), Some("CORP".into())));
         let p = RdpParams {
-            user: r"CORP\alice".into(),
-            domain: "OTHER".into(),
+            user: "alice@corp.example.com".into(),
             ..p
         };
         let t = RdpTarget::from_params(&p, 1920, 1080, 150);
-        assert_eq!(t.credentials(), (r"CORP\alice".into(), Some("OTHER".into())));
+        assert_eq!(t.credentials(), ("alice@corp.example.com".into(), None));
         assert_eq!(t.addr(), "win:3389");
     }
 }

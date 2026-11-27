@@ -118,8 +118,6 @@ pub struct RdpParams {
     pub host: String,
     pub port: i32,
     pub user: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub domain: String,
     /// 通过这个 SSH 连接转发到远程桌面。
     #[serde(skip_serializing_if = "String::is_empty")]
     pub jump_id: String,
@@ -138,7 +136,6 @@ impl Default for RdpParams {
             host: String::new(),
             port: DEFAULT_RDP_PORT,
             user: String::new(),
-            domain: String::new(),
             jump_id: String::new(),
             resolution: RdpResolution::Fit,
             width: DEFAULT_RDP_WIDTH,
@@ -255,7 +252,7 @@ impl Connection {
                 }
             }
             ConnParams::Rdp(p) => {
-                for s in [&mut p.host, &mut p.user, &mut p.domain, &mut p.jump_id] {
+                for s in [&mut p.host, &mut p.user, &mut p.jump_id] {
                     trim(s);
                 }
                 if p.port == 0 {

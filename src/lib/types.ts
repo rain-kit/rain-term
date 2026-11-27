@@ -115,7 +115,6 @@ export interface RdpParams {
   host: string;
   port: number;
   user: string;
-  domain?: string;
   /** 经这个 SSH 连接转发到远程桌面 */
   jumpId?: string;
   resolution: RdpResolution;
