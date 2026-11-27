@@ -304,6 +304,8 @@ const zhCN = {
   "tools.sftp": "SFTP",
   "tools.sftpSudo": "默认使用 sudo",
   "tools.sftpSudoDesc": "SFTP 以 root 身份打开，需要登录用户能使用 sudo；连接里单独设置的优先，已打开的 SFTP 不受影响",
+  "tools.sftpFollow": "跟随终端目录",
+  "tools.sftpFollowDesc": "终端里 cd 到哪个目录，侧栏 SFTP 就切到哪里；打开终端时会自动执行一行设置命令让 bash、zsh 报告当前目录，对之后打开或重新连接的终端生效",
   "settings.logs": "日志",
   "settings.logLevel": "日志级别",
   "settings.logLevelDesc": "Debug 级别会记录更多细节，排查问题时使用",

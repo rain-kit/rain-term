@@ -242,6 +242,7 @@ impl Fixture {
             .open(
                 conn_id,
                 PtySize { cols: 80, rows: 24 },
+                false,
                 Box::new(move |e| drop(tx.send(e))),
             )
             .await

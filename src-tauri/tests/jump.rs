@@ -106,7 +106,7 @@ impl Fixture {
         let (tx, rx) = unbounded_channel();
         let id = self
             .svc
-            .open(conn_id, SIZE, Box::new(move |e| drop(tx.send(e))))
+            .open(conn_id, SIZE, false, Box::new(move |e| drop(tx.send(e))))
             .await?;
         Ok((id, rx))
     }

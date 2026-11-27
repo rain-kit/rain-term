@@ -69,6 +69,17 @@ function pasteMessage(t: ReturnType<typeof useI18n>["t"], text: string, producti
   return lines ? t("terminal.pasteProdLines", { name, lines }) : t("terminal.pasteProdMessage", { name });
 }
 
+/** OSC 7 的 file://主机/路径，路径按 URL 编码；编码不合法时按原样使用。 */
+function osc7Path(data: string) {
+  const m = /^file:\/\/[^/]*(\/.*)$/.exec(data);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
 let webglBroken = false;
 
 /**
@@ -104,6 +115,7 @@ export default function TerminalView({
   production,
   incognito = false,
   onStatus,
+  onCwd,
 }: {
   connId: string;
   name: string;
@@ -113,6 +125,8 @@ export default function TerminalView({
   /** 无痕模式：状态栏显示标记。 */
   incognito?: boolean;
   onStatus: (s: TermStatus) => void;
+  /** shell 报告了当前目录（OSC 7 或 OSC 1337 CurrentDir）。 */
+  onCwd?: (path: string) => void;
 }) {
   const { t, tm } = useI18n();
   const toast = useToast();
@@ -134,6 +148,8 @@ export default function TerminalView({
   productionRef.current = production;
   const onStatusRef = useRef(onStatus);
   onStatusRef.current = onStatus;
+  const onCwdRef = useRef(onCwd);
+  onCwdRef.current = onCwd;
 
   const [status, setStatus] = useState<{ s: TermStatus; message?: string }>({ s: "connecting" });
   const [pasting, setPasting] = useState<string | null>(null);
@@ -258,6 +274,17 @@ export default function TerminalView({
     xt.loadAddon(new Unicode11Addon());
     xt.unicode.activeVersion = "11";
     xt.loadAddon(new WebLinksAddon((_e, uri) => settingsApi.openUrl(uri).catch(toast.error)));
+    xt.parser.registerOscHandler(7, (data) => {
+      const p = osc7Path(data);
+      if (p) onCwdRef.current?.(p);
+      return true;
+    });
+    xt.parser.registerOscHandler(1337, (data) => {
+      if (!data.startsWith("CurrentDir=")) return false;
+      const p = data.slice("CurrentDir=".length);
+      if (p.startsWith("/")) onCwdRef.current?.(p);
+      return true;
+    });
     xt.open(el);
     setWebgl(xt, gl, activeRef.current);
     term.current = xt;

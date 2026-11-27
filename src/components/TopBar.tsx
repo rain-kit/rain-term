@@ -62,6 +62,12 @@ function ToolsMenu() {
               checked={tools.sftp.sudo}
               onChange={(sudo) => setGroup("sftp", { sudo })}
             />
+            <SwitchRow
+              title={t("tools.sftpFollow")}
+              desc={t("tools.sftpFollowDesc")}
+              checked={tools.sftp.followTerminal}
+              onChange={(followTerminal) => setGroup("sftp", { followTerminal })}
+            />
             <div className="mt-4 mb-2 text-xs font-semibold tracking-wide text-muted">{t("tools.enhance")}</div>
             <SwitchRow
               title={t("tools.clickMovesCursor")}

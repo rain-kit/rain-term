@@ -315,6 +315,8 @@ const en: Messages = {
   "tools.sftp": "SFTP",
   "tools.sftpSudo": "Use sudo by default",
   "tools.sftpSudoDesc": "Open SFTP as root; the login user must be able to use sudo. A connection's own setting takes precedence; SFTP panels already open are not affected",
+  "tools.sftpFollow": "Follow terminal folder",
+  "tools.sftpFollowDesc": "The SFTP side panel switches to wherever you cd in the terminal. A setup command is run when a terminal opens so bash and zsh report the current folder; applies to terminals opened or reconnected afterwards",
   "settings.logs": "Logs",
   "settings.logLevel": "Log level",
   "settings.logLevelDesc": "Debug records more detail, useful for troubleshooting",

@@ -97,10 +97,14 @@ impl Fixture {
     }
 
     async fn open(&self, conn_id: &str) -> Term {
+        self.open_with(conn_id, false).await
+    }
+
+    async fn open_with(&self, conn_id: &str, report_cwd: bool) -> Term {
         let (tx, rx) = unbounded_channel();
         let id = self
             .svc
-            .open(conn_id, SIZE, Box::new(move |e| drop(tx.send(e))))
+            .open(conn_id, SIZE, report_cwd, Box::new(move |e| drop(tx.send(e))))
             .await
             .unwrap();
         Term {
@@ -230,6 +234,24 @@ async fn tabs_share_one_connection() {
     c.send("echo again").await;
     c.read_until("again\r\n").await;
     assert_eq!(srv.accepted.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn cwd_report_only_when_enabled() {
+    let srv = TestServer::start().await;
+    let f = fixture(&srv);
+    let id = f.add_conn(srv.addr.port(), 30, "/srv/app");
+
+    let mut on = f.open_with(&id, true).await;
+    on.send("echo end").await;
+    let out = on.read_until("end\r\n").await;
+    let (setup, cd) = (out.find("__rt_cwd").unwrap(), out.find("/srv/app").unwrap());
+    assert!(setup < cd, "先开启目录报告再进入初始目录：{out:?}");
+
+    let mut off = f.open_with(&id, false).await;
+    off.send("echo end").await;
+    let out = off.read_until("end\r\n").await;
+    assert!(!out.contains("__rt_cwd"), "关闭时不注入：{out:?}");
 }
 
 #[tokio::test]

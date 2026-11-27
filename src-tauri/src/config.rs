@@ -94,6 +94,8 @@ pub struct EnhanceConfig {
 pub struct SftpToolsConfig {
     /// 连接没有单独设置时，SFTP 是否用 sudo 以 root 身份打开
     pub sudo: bool,
+    /// SFTP 跟随终端目录：打开终端时注入报告当前目录的命令
+    pub follow_terminal: bool,
 }
 
 /// config.yaml 的内容。
@@ -288,6 +290,7 @@ mod tests {
         assert_eq!(cfg.terminal.scrollback, 10_000);
         assert!(!cfg.tools.enhance.click_moves_cursor, "增强功能默认关闭");
         assert!(!cfg.tools.sftp.sudo, "SFTP 默认不用 sudo");
+        assert!(!cfg.tools.sftp.follow_terminal, "SFTP 默认不跟随终端目录");
 
         let cfg: AppConfig =
             serde_yaml::from_str("tools:\n    enhance:\n        clickMovesCursor: true\n")

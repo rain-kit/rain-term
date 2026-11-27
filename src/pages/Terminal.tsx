@@ -42,6 +42,8 @@ interface Tab {
   busy: number;
   /** 侧栏里打开过 SFTP；之后一直保留到标签关闭，切换或隐藏侧栏不会中断传输。 */
   sftp: boolean;
+  /** shell 最近报告的当前目录，侧栏 SFTP 跟随终端时使用。 */
+  cwd?: string;
 }
 
 const needsConfirm = (x: Tab) => x.status === "connected" || x.busy > 0;
@@ -190,7 +192,7 @@ export default function Terminal({
     else remove(keys);
   };
 
-  const update = (key: string, patch: Partial<Pick<Tab, "status" | "busy" | "sftp">>) =>
+  const update = (key: string, patch: Partial<Pick<Tab, "status" | "busy" | "sftp" | "cwd">>) =>
     setTabs((list) =>
       list.map((x) => (x.key === key && Object.entries(patch).some(([k, v]) => x[k as keyof Tab] !== v) ? { ...x, ...patch } : x)),
     );
@@ -312,6 +314,7 @@ export default function Terminal({
                         production={production.has(x.connId)}
                         incognito={incognito.has(x.connId)}
                         onStatus={(s) => update(x.key, { status: s })}
+                        onCwd={(p) => update(x.key, { cwd: p })}
                       />
                     ) : (
                       <RdpView
@@ -347,6 +350,7 @@ export default function Terminal({
                         connId={x.connId}
                         name={title(x)}
                         active={panel === "sftp" && x.key === panelTab?.key}
+                        termCwd={x.cwd}
                         onBusy={(n) => update(x.key, { busy: n })}
                       />
                     </div>

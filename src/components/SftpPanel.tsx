@@ -45,8 +45,7 @@ interface Task extends Transfer {
 
 const SPEED_WINDOW = 1000;
 const REFRESH_DELAY = 300;
-const DOWNLOAD_DIR_KEY = "sftp.downloadDir";
-/** 侧栏窄时只显示名称和大小，宽一些再显示修改时间和权限。 */
+const DOWNLOAD_DIR_KEY = "sftp.downloadDir";/** 侧栏窄时只显示名称和大小，宽一些再显示修改时间和权限。 */
 const COLS =
   "grid grid-cols-[minmax(0,1fr)_5.5rem] gap-3 @md:grid-cols-[minmax(0,1fr)_5.5rem_9rem] @xl:grid-cols-[minmax(0,1fr)_5.5rem_9rem_6.5rem]";
 const MTIME_COL = "hidden @md:block";
@@ -99,12 +98,15 @@ export default function SftpPanel({
   connId,
   name,
   active,
+  termCwd,
   onBusy,
 }: {
   connId: string;
   name: string;
   /** 正在显示；只有这时响应从系统拖入的文件。 */
   active: boolean;
+  /** 终端 shell 报告的当前目录；还没报告过时为 undefined。 */
+  termCwd?: string;
   /** 排队中和传输中的任务数。 */
   onBusy: (n: number) => void;
 }) {
@@ -119,8 +121,7 @@ export default function SftpPanel({
   const [cwd, setCwd] = useState("");
   const cwdRef = useRef("");
   cwdRef.current = cwd;
-  const [pathInput, setPathInput] = useState("");
-  const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [pathInput, setPathInput] = useState("");  const [entries, setEntries] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const anchor = useRef(-1);
@@ -150,7 +151,9 @@ export default function SftpPanel({
   const [asking, setAsking] = useState<{ path?: string; value: string; error?: string } | null>(null);
   const [confirmRoot, setConfirmRoot] = useState(false);
   const conn = useConns().conns.find((c) => c.id === connId);
-  const globalSudo = !!useSettings().settings?.tools.sftp.sudo;
+  const sftpTools = useSettings().settings?.tools.sftp;
+  const globalSudo = !!sftpTools?.sudo;
+  const follow = !!sftpTools?.followTerminal;
   const defaultSudo = conn?.kind === "ssh" && (conn.sftpSudo === "on" || (conn.sftpSudo !== "off" && globalSudo));
   const asRoot = sudo ?? defaultSudo;
 
@@ -177,8 +180,8 @@ export default function SftpPanel({
     }
   };
 
-  /** 列出目录，成功返回 true；keep 为 true 时保留仍存在的选中项。 */
-  const load = async (path: string, keep = false) => {
+  /** 列出目录，成功返回 true；keep 为 true 时保留仍存在的选中项，quiet 为 true 时失败不提示。 */
+  const load = async (path: string, keep = false, quiet = false) => {
     const id = panel.current;
     if (!id) return false;
     const my = ++loadSeq.current;
@@ -198,7 +201,7 @@ export default function SftpPanel({
       return true;
     } catch (e) {
       if (my === loadSeq.current) {
-        toast.error(e);
+        if (!quiet) toast.error(e);
         setPathInput(cwdRef.current);
       }
       return false;
@@ -303,6 +306,11 @@ export default function SftpPanel({
       panel.current = null;
     };
   }, [connId]);
+
+  // 跟随终端：终端换了目录就切过去；没有权限进入的目录（如 su 后的 /root）静默跳过。
+  useEffect(() => {
+    if (follow && connected && termCwd && termCwd !== cwdRef.current) load(termCwd, false, true);
+  }, [follow, connected, termCwd]);
 
   const open = (e: FileEntry) => (isDir(e) ? load(e.path) : download([e]));
   const up = () => cwd && cwd !== "/" && load(parentOf(cwd));
@@ -467,19 +475,41 @@ export default function SftpPanel({
 
   return (
     <div ref={box} className="@container relative flex min-h-0 flex-1 flex-col bg-canvas">
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-line px-2">
-        <IconButton label={t("sftp.up")} size="sm" disabled={!connected || cwd === "/"} onClick={up}>
-          <ArrowUp size={16} />
-        </IconButton>
-        <IconButton label={t("sftp.home")} size="sm" disabled={!connected} onClick={() => load(home)}>
-          <House size={15} />
-        </IconButton>
-        <IconButton label={t("sftp.refresh")} size="sm" disabled={!connected} onClick={refresh}>
-          <RotateCw size={15} className={cx(loading && "animate-spin")} />
-        </IconButton>
+      <div className="shrink-0 border-b border-line px-2 pb-2">
+        <div className="flex h-9 items-center gap-1">
+          <IconButton label={t("sftp.up")} size="sm" disabled={!connected || cwd === "/"} onClick={up}>
+            <ArrowUp size={16} />
+          </IconButton>
+          <IconButton label={t("sftp.home")} size="sm" disabled={!connected} onClick={() => load(home)}>
+            <House size={15} />
+          </IconButton>
+          <IconButton label={t("sftp.refresh")} size="sm" disabled={!connected} onClick={refresh}>
+            <RotateCw size={15} className={cx(loading && "animate-spin")} />
+          </IconButton>
+          <span className="flex-1" />
+          <IconButton label={t("sftp.newFolder")} size="sm" disabled={!connected} onClick={() => setNaming({ value: "" })}>
+            <FolderPlus size={16} />
+          </IconButton>
+          <IconButton label={t("sftp.upload")} size="sm" disabled={!connected} onClick={() => upload()}>
+            <Upload size={15} />
+          </IconButton>
+          <IconButton label={t("sftp.download")} size="sm" disabled={!connected || !selected.length} onClick={() => download(selected)}>
+            <Download size={15} />
+          </IconButton>
+          <IconButton
+            label={t(busy ? "sftp.sudoBusy" : asRoot ? "sftp.sudoOff" : "sftp.sudoOn")}
+            size="sm"
+            disabled={status.s === "connecting" || busy > 0}
+            onClick={() => (!asRoot && conn?.production ? setConfirmRoot(true) : switchSudo(!asRoot))}
+            className={cx(asRoot && "bg-amber-500/15 !text-amber-600 dark:!text-amber-400")}
+          >
+            {asRoot ? <ShieldCheck size={15} /> : <Shield size={15} />}
+          </IconButton>
+        </div>
         <Input
           mono
-          className="h-7.5 min-w-0 flex-1"
+          className="h-7.5 w-full"
+          title={pathInput}
           aria-label={t("sftp.path")}
           disabled={!connected}
           value={pathInput}
@@ -490,24 +520,6 @@ export default function SftpPanel({
           }}
           onBlur={() => setPathInput(cwdRef.current)}
         />
-        <IconButton label={t("sftp.newFolder")} size="sm" disabled={!connected} onClick={() => setNaming({ value: "" })}>
-          <FolderPlus size={16} />
-        </IconButton>
-        <IconButton label={t("sftp.upload")} size="sm" disabled={!connected} onClick={() => upload()}>
-          <Upload size={15} />
-        </IconButton>
-        <IconButton label={t("sftp.download")} size="sm" disabled={!connected || !selected.length} onClick={() => download(selected)}>
-          <Download size={15} />
-        </IconButton>
-        <IconButton
-          label={t(busy ? "sftp.sudoBusy" : asRoot ? "sftp.sudoOff" : "sftp.sudoOn")}
-          size="sm"
-          disabled={status.s === "connecting" || busy > 0}
-          onClick={() => (!asRoot && conn?.production ? setConfirmRoot(true) : switchSudo(!asRoot))}
-          className={cx(asRoot && "bg-amber-500/15 !text-amber-600 dark:!text-amber-400")}
-        >
-          {asRoot ? <ShieldCheck size={15} /> : <Shield size={15} />}
-        </IconButton>
       </div>
 
       {status.s === "connecting" && (

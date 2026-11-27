@@ -33,6 +33,8 @@ export interface ToolsSettings {
   sftp: {
     /** 连接没有单独设置时，SFTP 是否用 sudo 以 root 身份打开。 */
     sudo: boolean;
+    /** SFTP 跟随终端目录；开启时打开终端会注入报告当前目录的命令。 */
+    followTerminal: boolean;
   };
 }
 

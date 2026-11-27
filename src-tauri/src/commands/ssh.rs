@@ -39,8 +39,9 @@ pub async fn session_open(
         };
         let _ = on_event.send(body);
     });
+    let report_cwd = s.config.lock().unwrap().tools.sftp.follow_terminal;
     s.sessions
-        .open(&conn_id, PtySize { cols, rows }, sink)
+        .open(&conn_id, PtySize { cols, rows }, report_cwd, sink)
         .await
 }
 

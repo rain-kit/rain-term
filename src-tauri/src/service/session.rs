@@ -31,6 +31,14 @@ const REASON_GRACE: Duration = Duration::from_millis(500);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 /// 无痕模式：登录后禁止本次会话把命令写进历史文件。
 const INCOGNITO_SETUP: &str = "unset HISTFILE\r";
+/// bash / zsh 每次显示提示符前用 OSC 1337 CurrentDir 报告当前目录，SFTP 据此跟随终端。
+/// 开头的空格让 HISTCONTROL=ignorespace 时不进历史；放在 eval 里，其他 shell 不会因语法报错；
+/// 报告前后保持 $?，不影响提示符里显示上条命令的退出码。
+const CWD_REPORT_SETUP: &str = concat!(
+    r#" [ -n "$BASH_VERSION$ZSH_VERSION" ]&&eval '__rt_cwd(){ local s=$?;printf "\033]1337;CurrentDir=%s\007" "$PWD";return $s;};"#,
+    r#"[ -n "$ZSH_VERSION" ]&&precmd_functions+=(__rt_cwd)||PROMPT_COMMAND="__rt_cwd;$PROMPT_COMMAND"'"#,
+    "\r"
+);
 
 /// 会话结束：shell 退出或连接断开。用户主动关闭时不发。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -91,10 +99,12 @@ impl SessionService {
     }
 
     /// 打开终端会话，返回会话 ID；输出和结束通知从 sink 推出。
+    /// report_cwd 为 true 时登录后让 shell 报告当前目录，供 SFTP 跟随。
     pub async fn open(
         self: &Arc<Self>,
         conn_id: &str,
         size: PtySize,
+        report_cwd: bool,
         sink: SessionSink,
     ) -> ApiResult<String> {
         let conn = self.conns.resolve(conn_id)?;
@@ -109,7 +119,7 @@ impl SessionService {
         let mut retry = true;
         let (client, writer, reader) = loop {
             let (client, reused) = self.pool.acquire(&conn, p).await?;
-            match start_shell(&client.ssh, size, &p.init_dir, incognito).await {
+            match start_shell(&client.ssh, size, &p.init_dir, incognito, report_cwd).await {
                 Ok((w, r)) => break (client, w, r),
                 Err(e) => {
                     self.pool.release(&client);
@@ -230,17 +240,22 @@ async fn start_shell(
     size: PtySize,
     init_dir: &str,
     incognito: bool,
+    report_cwd: bool,
 ) -> Result<(ShellWriter, ShellReader), SshError> {
     let (w, r) = ssh.open_shell(size).await?;
-    // 无痕模式先禁止本次会话写历史文件，再进入初始目录。
-    if incognito
-        && let Err(e) = w.write(INCOGNITO_SETUP.as_bytes()).await
-    {
-        w.close().await;
-        return Err(e);
+    // 无痕模式先禁止本次会话写历史文件，再开启目录报告，最后进入初始目录。
+    let mut setup = String::new();
+    if incognito {
+        setup.push_str(INCOGNITO_SETUP);
     }
-    if !init_dir.is_empty()
-        && let Err(e) = w.write(cd_command(init_dir).as_bytes()).await
+    if report_cwd {
+        setup.push_str(CWD_REPORT_SETUP);
+    }
+    if !init_dir.is_empty() {
+        setup.push_str(&cd_command(init_dir));
+    }
+    if !setup.is_empty()
+        && let Err(e) = w.write(setup.as_bytes()).await
     {
         w.close().await;
         return Err(e);

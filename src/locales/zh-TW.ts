@@ -306,6 +306,8 @@ const zhTW: Messages = {
   "tools.sftp": "SFTP",
   "tools.sftpSudo": "預設使用 sudo",
   "tools.sftpSudoDesc": "SFTP 以 root 身分開啟，需要登入使用者能使用 sudo；連線中單獨設定的優先，已開啟的 SFTP 不受影響",
+  "tools.sftpFollow": "跟隨終端機目錄",
+  "tools.sftpFollowDesc": "終端機裡 cd 到哪個目錄，側欄 SFTP 就切到哪裡；開啟終端機時會自動執行一行設定命令讓 bash、zsh 回報目前目錄，對之後開啟或重新連線的終端機生效",
   "settings.logs": "日誌",
   "settings.logLevel": "日誌級別",
   "settings.logLevelDesc": "Debug 級別會記錄更多細節，排查問題時使用",
