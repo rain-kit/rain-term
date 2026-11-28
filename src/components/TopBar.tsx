@@ -38,7 +38,7 @@ function WindowControls() {
   );
 }
 
-/** 顶栏左侧带文字的按钮，点开一个窗口。 */
+/** 顶栏带文字的按钮，点开一个窗口。 */
 function DialogButton({
   icon,
   label,
@@ -54,7 +54,8 @@ function DialogButton({
       <button
         onClick={() => setOpen(true)}
         className={cx(
-          "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm transition-colors hover:bg-subtle hover:text-ink",
+          "inline-flex items-center gap-1.5 transition-colors hover:bg-subtle hover:text-ink",
+          isMac ? "h-7 rounded-md px-2 text-[13px]" : "h-8 rounded-lg px-2.5 text-sm",
           open ? "bg-subtle text-ink" : "text-muted",
         )}
       >
@@ -66,15 +67,71 @@ function DialogButton({
   );
 }
 
-/** 窗口顶栏，同时作为拖动区域：左侧是名称（点击回到终端）、密钥/用户和工具，右侧是设置（再点一次回到终端）和 Windows 的窗口按钮。 */
+/**
+ * 窗口顶栏，同时作为拖动区域（data-tauri-drag-region="deep" 让非按钮区域都能拖动和双击缩放）：
+ * - macOS：左侧留给系统红绿灯按钮，中间显示窗口标题（设置页点击回到终端），右侧是密钥/用户、工具和设置；
+ * - Windows / Linux：左侧是名称（点击回到终端）、密钥/用户和工具，右侧是设置和 Windows 的窗口按钮。
+ */
 export default function TopBar({ view, onChange }: { view: View; onChange: (v: View) => void }) {
   const { t } = useI18n();
   const update = useUpdate().info;
+  const settingsLabel =
+    view === "settings"
+      ? t("nav.backToTerminal")
+      : update?.hasUpdate
+        ? t("update.found", { version: update.latest ?? "" })
+        : t("nav.settings");
+
+  const dialogs = (
+    <div className={cx("flex items-center", isMac ? "gap-0.5" : "-ml-2 gap-1")}>
+      <DialogButton icon={<KeyRound size={isMac ? 14 : 15} />} label={t("keys.title")} dialog={KeysDialog} />
+      <DialogButton icon={<Wrench size={isMac ? 14 : 15} />} label={t("tools.title")} dialog={ToolsDialog} />
+    </div>
+  );
+
+  const settingsBtn = (
+    <IconButton
+      size={isMac ? "sm" : "md"}
+      label={settingsLabel}
+      onClick={() => onChange(view === "settings" ? "terminal" : "settings")}
+      className={cx("relative", view === "settings" && "bg-subtle text-ink")}
+    >
+      {view === "settings" ? <X size={isMac ? 16 : 17} /> : <Settings size={isMac ? 16 : 17} />}
+      {update?.hasUpdate && view !== "settings" && (
+        <span className={cx("absolute size-2 rounded-full bg-red-500", isMac ? "top-1 right-1" : "top-1.5 right-1.5")} />
+      )}
+    </IconButton>
+  );
+
+  if (isMac) {
+    return (
+      <header
+        data-tauri-drag-region="deep"
+        className="relative flex h-10 shrink-0 items-center justify-end border-b border-line bg-surface/60 pr-2.5 pl-20"
+      >
+        {view === "settings" ? (
+          <button
+            onClick={() => onChange("terminal")}
+            title={t("nav.backToTerminal")}
+            className="absolute left-1/2 -translate-x-1/2 rounded-md px-2 py-0.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink"
+          >
+            Rain Term
+          </button>
+        ) : (
+          <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-[13px] font-medium text-muted">
+            Rain Term
+          </span>
+        )}
+        {dialogs}
+        <div className="mx-1.5 h-3.5 w-px bg-line" />
+        {settingsBtn}
+      </header>
+    );
+  }
+
   return (
-    <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-5 border-b border-line bg-surface/60">
-      {/* macOS 左侧留出红绿灯按钮的位置。 */}
-      <div data-tauri-drag-region className={cx("flex items-center", isMac ? "pl-20" : "pl-4")}>
-        {/* 不能放进拖动区域，否则按下鼠标就开始拖窗口，点击不生效。 */}
+    <header data-tauri-drag-region="deep" className="flex h-12 shrink-0 items-center gap-5 border-b border-line bg-surface/60">
+      <div className="flex items-center pl-4">
         <button
           onClick={() => onChange("terminal")}
           title={t("nav.backToTerminal")}
@@ -85,29 +142,11 @@ export default function TopBar({ view, onChange }: { view: View; onChange: (v: V
         </button>
       </div>
 
-      <div className="-ml-2 flex items-center gap-1">
-        <DialogButton icon={<KeyRound size={15} />} label={t("keys.title")} dialog={KeysDialog} />
-        <DialogButton icon={<Wrench size={15} />} label={t("tools.title")} dialog={ToolsDialog} />
-      </div>
+      {dialogs}
 
-      <div data-tauri-drag-region className="flex-1 self-stretch" />
+      <div className="flex-1 self-stretch" />
 
-      <div className="flex items-center gap-1">
-        <IconButton
-          label={
-            view === "settings"
-              ? t("nav.backToTerminal")
-              : update?.hasUpdate
-                ? t("update.found", { version: update.latest ?? "" })
-                : t("nav.settings")
-          }
-          onClick={() => onChange(view === "settings" ? "terminal" : "settings")}
-          className={cx("relative", view === "settings" && "bg-subtle text-ink")}
-        >
-          {view === "settings" ? <X size={17} /> : <Settings size={17} />}
-          {update?.hasUpdate && view !== "settings" && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-red-500" />}
-        </IconButton>
-      </div>
+      <div className="flex items-center gap-1">{settingsBtn}</div>
 
       {isWindows && isTauri() ? (
         <div className="h-full">
