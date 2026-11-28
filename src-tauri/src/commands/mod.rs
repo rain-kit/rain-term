@@ -2,6 +2,7 @@
 //! 只返回数据和国际化 key（见 i18n::Msg、error::ApiError），文案由前端翻译。
 
 pub mod conn;
+pub mod keys;
 pub mod monitor;
 pub mod rdp;
 pub mod settings;

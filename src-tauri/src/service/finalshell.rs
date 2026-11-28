@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use base64::Engine;
 use md5::{Digest, Md5};
@@ -14,7 +14,9 @@ use serde_json::{Map, Value};
 use tracing::warn;
 
 use crate::model::{AuthType, ConnParams, Connection, RdpParams, SshParams};
-use crate::util::write_file_atomic;
+
+/// 把私钥 (名称, 私钥文本, 私钥密码) 导入密钥管理，返回密钥 ID；导入不了时返回 None。
+pub(crate) type ImportKey<'a> = dyn FnMut(&str, &str, &str) -> Option<String> + 'a;
 
 const FS_SSH: i32 = 100;
 const FS_RDP: i32 = 101;
@@ -81,23 +83,23 @@ impl Bundle {
 
 /// 读取选中的一个文件。主机文件只导入这一台（分组名和私钥会向父目录找）；
 /// `folder.json` 或 `config.json` 则导入旁边的整棵目录。
-pub(crate) fn load_file(path: &Path, keys_dir: &Path) -> Option<Vec<Connection>> {
+pub(crate) fn load_file(path: &Path, import_key: &mut ImportKey) -> Option<Vec<Connection>> {
     let text = read_text(path)?;
     let value = parse_json(&text)?;
     let bundle = bundle_from_value(&value)?;
     if bundle.hosts.is_empty() {
         let root = path.parent()?;
-        return Some(load_dir(root, keys_dir));
+        return Some(load_dir(root, import_key));
     }
     let mut bundle = bundle;
     if let Some(dir) = path.parent() {
         bundle.merge(meta_upward(dir));
     }
-    Some(to_connections(bundle, keys_dir))
+    Some(to_connections(bundle, import_key))
 }
 
 /// 导入 FinalShell 数据目录、`conn` 目录，或其中某一层文件夹。
-pub(crate) fn load_dir(root: &Path, keys_dir: &Path) -> Vec<Connection> {
+pub(crate) fn load_dir(root: &Path, import_key: &mut ImportKey) -> Vec<Connection> {
     let conn = root.join("conn");
     let walk = if conn.is_dir() {
         conn.clone()
@@ -115,7 +117,7 @@ pub(crate) fn load_dir(root: &Path, keys_dir: &Path) -> Vec<Connection> {
     if let Some(parent) = walk.parent() {
         bundle.merge(meta_upward(parent));
     }
-    to_connections(bundle, keys_dir)
+    to_connections(bundle, import_key)
 }
 
 fn parse_json(text: &str) -> Option<Value> {
@@ -373,7 +375,7 @@ fn meta_upward(start: &Path) -> Bundle {
     bundle
 }
 
-fn to_connections(mut bundle: Bundle, keys_dir: &Path) -> Vec<Connection> {
+fn to_connections(mut bundle: Bundle, import_key: &mut ImportKey) -> Vec<Connection> {
     bundle
         .folders
         .retain(|f| f.delete_time == 0 && !f.id.is_empty());
@@ -403,7 +405,7 @@ fn to_connections(mut bundle: Bundle, keys_dir: &Path) -> Vec<Connection> {
         .filter(|id| !id.is_empty())
         .collect();
 
-    let mut written: HashMap<String, (String, String)> = HashMap::new();
+    let mut imported: HashMap<String, Option<String>> = HashMap::new();
     let mut out = Vec::new();
     for host in &bundle.hosts {
         let rdp = host.conn_type == FS_RDP;
@@ -465,11 +467,10 @@ fn to_connections(mut bundle: Bundle, keys_dir: &Path) -> Vec<Connection> {
             }
         };
         if host.auth_type == FS_AUTH_KEY {
-            match key_material(&host.secret_key_id, &bundle.keys, keys_dir, &mut written) {
-                Some((path, passphrase)) => {
+            match key_ref(&host.secret_key_id, &bundle.keys, import_key, &mut imported) {
+                Some(key_id) => {
                     params.auth = AuthType::Key;
-                    params.key_path = path;
-                    params.key_passphrase = passphrase;
+                    params.key_id = key_id;
                 }
                 None => {
                     if !host.secret_key_id.is_empty() {
@@ -529,31 +530,31 @@ fn group_of(parent_id: &str, folders: &HashMap<&str, &Folder>) -> String {
     names.join("/")
 }
 
-fn key_material(
+/// 把 FinalShell 的私钥导入密钥管理，同一个私钥只导入一次。
+fn key_ref(
     id: &str,
     keys: &[SecretKey],
-    keys_dir: &Path,
-    written: &mut HashMap<String, (String, String)>,
-) -> Option<(String, String)> {
+    import_key: &mut ImportKey,
+    imported: &mut HashMap<String, Option<String>>,
+) -> Option<String> {
     let id = id.trim();
     if id.is_empty() {
         return None;
     }
-    if let Some(found) = written.get(id) {
-        return Some(found.clone());
+    if let Some(found) = imported.get(id) {
+        return found.clone();
     }
     let key = keys.iter().find(|k| k.id == id)?;
-    let pem = key_pem(&key.key_data)?;
-    let path = key_path(keys_dir, id, &key.name);
-    write_file_atomic(&path, pem.as_bytes()).ok()?;
-    let passphrase = if key.password.trim().is_empty() {
-        String::new()
-    } else {
-        decode_password(&key.password).unwrap_or_default()
-    };
-    let stored = (path.display().to_string(), passphrase);
-    written.insert(id.to_string(), stored.clone());
-    Some(stored)
+    let found = key_pem(&key.key_data).and_then(|pem| {
+        let passphrase = if key.password.trim().is_empty() {
+            String::new()
+        } else {
+            decode_password(&key.password).unwrap_or_default()
+        };
+        import_key(&key.name, &pem, &passphrase)
+    });
+    imported.insert(id.to_string(), found.clone());
+    found
 }
 
 fn key_pem(data: &str) -> Option<String> {
@@ -576,28 +577,6 @@ fn normalize_pem(text: &str) -> String {
     } else {
         format!("{text}\n")
     }
-}
-
-fn key_path(dir: &Path, id: &str, name: &str) -> PathBuf {
-    let slug = |s: &str, n: usize| -> String {
-        s.chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-            .take(n)
-            .collect()
-    };
-    let id_part = slug(id, 64);
-    let id_part = if id_part.is_empty() {
-        "key".to_string()
-    } else {
-        id_part
-    };
-    let name_part = slug(name, 32);
-    let file = if name_part.is_empty() {
-        format!("finalshell-{id_part}.pem")
-    } else {
-        format!("finalshell-{name_part}-{id_part}.pem")
-    };
-    dir.join("keys").join(file)
 }
 
 /// 解密 FinalShell 的密码字段。解不开时返回 None，调用方仍导入这台主机。

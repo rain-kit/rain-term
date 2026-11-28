@@ -7,6 +7,8 @@ import type {
   FilePreview,
   HostKeyPrompt,
   I18nMsg,
+  KeyGenerateReq,
+  KeyImportReq,
   MonitorEvent,
   RdpInput,
   RdpNotice,
@@ -19,6 +21,7 @@ import type {
   SftpEvent,
   SftpOpened,
   SftpOpenOptions,
+  SshKey,
   TestResult,
   Transfer,
   UpdateInfo,
@@ -65,7 +68,6 @@ export const connApi = {
   /** 用编辑器里尚未保存的内容测试连接。 */
   test: (req: SaveConnReq) => invoke<TestResult>("conn_test", { req }),
   /** 验证电脑密码后返回保存的密码；取消验证时返回 null。 */
-  revealPassword: (id: string) => invoke<string | null>("conn_reveal_password", { id }),
   /** 弹出保存对话框导出，ids 为空时导出全部；取消时返回 null。 */
   exportTo: (ids: string[] = []) => invoke<ExportResult | null>("conn_export", { ids }),
   /** 弹出文件选择框导入本应用导出的文件，返回导入的数量；取消时返回 null。 */
@@ -74,8 +76,22 @@ export const connApi = {
   importFinalShellDir: () => invoke<number | null>("conn_import_dir"),
   /** 选择 MobaXterm 会话文件并导入。取消时返回 null。 */
   importMobaXterm: () => invoke<number | null>("conn_import_moba"),
-  /** 取消时返回空字符串。 */
-  pickKeyFile: () => invoke<string>("pick_key_file"),
+};
+
+/** 密钥管理，见 src-tauri/src/service/keys.rs。 */
+export const keyApi = {
+  list: () => invoke<SshKey[]>("key_list"),
+  /** 已经导入过同一个私钥时报错。 */
+  import: (req: KeyImportReq) => invoke<SshKey>("key_import", { req }),
+  /** RSA 要几秒钟。 */
+  generate: (req: KeyGenerateReq) => invoke<SshKey>("key_generate", { req }),
+  rename: (id: string, name: string) => invoke<SshKey>("key_rename", { id, name }),
+  /** 还有连接在用时报错。 */
+  remove: (id: string) => invoke<void>("key_delete", { id }),
+  /** 选择私钥文件并读出内容；取消时返回 null。 */
+  readFile: () => invoke<{ name: string; content: string } | null>("key_read_file"),
+  /** 选择保存位置并导出私钥，返回保存的路径；取消时返回 null。 */
+  exportTo: (id: string) => invoke<string | null>("key_export", { id }),
 };
 
 export const hostKeyApi = {
@@ -204,6 +220,7 @@ export const updateApi = {
 /** 后端推送的事件，见 src-tauri/src/events.rs。 */
 export const events = {
   onConnChanged: (fn: () => void) => sub<null>("conn:changed", () => fn()),
+  onKeysChanged: (fn: () => void) => sub<null>("keys:changed", () => fn()),
   /** 设置在设置页以外被修改（导入连接时带入了工具配置）。 */
   onSettingsChanged: (fn: () => void) => sub<null>("settings:changed", () => fn()),
   onHostKey: (fn: (p: HostKeyPrompt) => void) => sub<HostKeyPrompt>("hostkey:prompt", fn),

@@ -1,6 +1,7 @@
 pub mod conn;
 mod finalshell;
 pub mod hostkey;
+pub mod keys;
 mod mobaxterm;
 pub mod monitor;
 pub mod pool;

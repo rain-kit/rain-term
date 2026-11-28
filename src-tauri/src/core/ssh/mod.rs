@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod jump;
+pub mod keyfile;
 pub mod known_hosts;
 pub mod proxy;
 pub mod sftp;
@@ -118,7 +119,8 @@ pub struct SshTarget {
     pub port: u16,
     pub user: String,
     pub auth: AuthType,
-    pub key_path: String,
+    /// 私钥内容（OpenSSH、PEM 或 PuTTY ppk 文本）。
+    pub key_data: String,
     pub password: String,
     pub key_passphrase: String,
 }
@@ -131,7 +133,7 @@ impl SshTarget {
             port: p.port as u16,
             user: p.user.clone(),
             auth: p.auth,
-            key_path: p.key_path.clone(),
+            key_data: p.key_data.clone(),
             password: p.password.clone(),
             key_passphrase: p.key_passphrase.clone(),
         }

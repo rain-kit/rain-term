@@ -63,8 +63,15 @@ pub struct SshParams {
     pub port: i32,
     pub user: String,
     pub auth: AuthType,
+    /// 私钥认证使用的密钥，见 [`SshKey`]。
     #[serde(skip_serializing_if = "String::is_empty")]
-    pub key_path: String,
+    pub key_id: String,
+    /// 登录前从密钥管理填入的私钥内容，不保存。
+    #[serde(skip)]
+    pub key_data: String,
+    /// 登录前从密钥管理填入的私钥密码，不保存。
+    #[serde(skip)]
+    pub key_passphrase: String,
     /// 跳板机：另一个 SSH 连接的 ID。
     #[serde(skip_serializing_if = "String::is_empty")]
     pub jump_id: String,
@@ -80,8 +87,6 @@ pub struct SshParams {
     pub sftp_sudo: SftpSudo,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub password: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub key_passphrase: String,
 }
 
 impl Default for SshParams {
@@ -91,14 +96,15 @@ impl Default for SshParams {
             port: DEFAULT_SSH_PORT,
             user: String::new(),
             auth: AuthType::Password,
-            key_path: String::new(),
+            key_id: String::new(),
+            key_data: String::new(),
+            key_passphrase: String::new(),
             jump_id: String::new(),
             keepalive_seconds: DEFAULT_KEEPALIVE,
             init_dir: String::new(),
             incognito: false,
             sftp_sudo: SftpSudo::Default,
             password: String::new(),
-            key_passphrase: String::new(),
         }
     }
 }
@@ -235,20 +241,14 @@ impl Connection {
         trim(&mut self.color);
         match &mut self.params {
             ConnParams::Ssh(p) => {
-                for s in [
-                    &mut p.host,
-                    &mut p.user,
-                    &mut p.key_path,
-                    &mut p.jump_id,
-                    &mut p.init_dir,
-                ] {
+                for s in [&mut p.host, &mut p.user, &mut p.key_id, &mut p.jump_id, &mut p.init_dir] {
                     trim(s);
                 }
                 if p.port == 0 {
                     p.port = DEFAULT_SSH_PORT;
                 }
                 if p.auth != AuthType::Key {
-                    p.key_path.clear();
+                    p.key_id.clear();
                 }
             }
             ConnParams::Rdp(p) => {
@@ -290,9 +290,6 @@ impl Connection {
                 }
                 if p.user.is_empty() {
                     return Err(msg!("err.conn.userRequired", "用户名不能为空"));
-                }
-                if p.auth == AuthType::Key && p.key_path.is_empty() {
-                    return Err(msg!("err.conn.keyPathRequired", "私钥认证需要选择私钥文件"));
                 }
                 if !(0..=MAX_KEEPALIVE).contains(&p.keepalive_seconds) {
                     let (value, max) = (p.keepalive_seconds, MAX_KEEPALIVE);
@@ -339,19 +336,29 @@ impl Connection {
             ConnParams::Ssh(p) => {
                 p.password.clear();
                 p.key_passphrase.clear();
+                p.key_data.clear();
             }
             ConnParams::Rdp(p) => p.password.clear(),
         }
     }
 
-    /// 密码类字段：(凭据种类, 值)。只包含当前类型和认证方式用得到的种类。
+    /// 私钥认证并选了密钥管理里的密钥时，返回密钥 ID。
+    pub fn key_ref(&self) -> Option<&str> {
+        match &self.params {
+            ConnParams::Ssh(p) if p.auth == AuthType::Key && !p.key_id.is_empty() => {
+                Some(p.key_id.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    /// 密码类字段：(凭据种类, 值)。只包含当前类型和认证方式用得到的种类；私钥密码跟着密钥保存。
     pub fn secrets_mut(&mut self) -> Vec<(&'static str, &mut String)> {
-        use crate::secrets::{KEY_PASSPHRASE, PASSWORD};
+        use crate::secrets::PASSWORD;
         match &mut self.params {
             ConnParams::Ssh(p) => match p.auth {
                 AuthType::Password => vec![(PASSWORD, &mut p.password)],
-                AuthType::Key => vec![(KEY_PASSPHRASE, &mut p.key_passphrase)],
-                AuthType::Agent => vec![],
+                AuthType::Key | AuthType::Agent => vec![],
             },
             ConnParams::Rdp(p) => vec![(PASSWORD, &mut p.password)],
         }
@@ -406,7 +413,6 @@ pub struct ConnView {
     #[serde(flatten)]
     pub conn: Connection,
     pub has_password: bool,
-    pub has_key_passphrase: bool,
 }
 
 /// 新建或修改连接。编辑已有连接时，密码类字段留空表示保持原值。
@@ -417,8 +423,6 @@ pub struct SaveConnReq {
     pub conn: Connection,
     #[serde(default)]
     pub clear_password: bool,
-    #[serde(default)]
-    pub clear_key_passphrase: bool,
 }
 
 /// 测试连接的结果。
@@ -446,6 +450,56 @@ pub struct HostKeyPrompt {
     /// 远程桌面证书变化时，之前信任的指纹。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous: Option<String>,
+}
+
+/// 密钥管理里的一个 SSH 密钥，保存在 keys.json；私钥内容和私钥密码由 secrets 加密存进 secrets.json。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SshKey {
+    pub id: String,
+    pub name: String,
+    /// 如 ssh-ed25519、ssh-rsa、ecdsa-sha2-nistp256。
+    pub algorithm: String,
+    /// RSA 密钥的位数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bits: Option<u32>,
+    /// SHA256:xxxx
+    pub fingerprint: String,
+    /// authorized_keys 格式的一行公钥。
+    pub public_key: String,
+    /// 私钥是否设置了密码。
+    pub encrypted: bool,
+    pub created_at: Option<DateTime<Local>>,
+}
+
+/// 导入私钥：content 是私钥文本，name 为空时用私钥的注释或类型。
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct KeyImportReq {
+    pub name: String,
+    pub content: String,
+    pub passphrase: String,
+}
+
+/// 生成密钥的类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum KeyType {
+    #[default]
+    Ed25519,
+    Ecdsa,
+    Rsa,
+}
+
+/// 生成密钥：bits 只对 RSA 有效。
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct KeyGenerateReq {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub key_type: KeyType,
+    pub bits: Option<u32>,
+    pub passphrase: String,
 }
 
 #[cfg(test)]
@@ -514,7 +568,7 @@ pub(crate) mod tests {
                 host: " srv ".into(),
                 user: "u".into(),
                 port: 0,
-                key_path: "/k".into(),
+                key_id: "k1".into(),
                 ..Default::default()
             }),
             ..Default::default()
@@ -523,8 +577,27 @@ pub(crate) mod tests {
         let p = ssh_of(&c);
         assert_eq!(p.host, "srv");
         assert_eq!(p.port, DEFAULT_SSH_PORT);
-        assert_eq!(p.key_path, "", "密码认证用不到私钥路径");
+        assert_eq!(p.key_id, "", "密码认证用不到密钥");
         assert_eq!(c.name, "u@srv");
+    }
+
+    #[test]
+    fn normalize_key_fields() {
+        let mut c = ssh("a", "");
+        let p = ssh_of_mut(&mut c);
+        p.auth = AuthType::Key;
+        c.normalize();
+        assert_eq!(c.key_ref(), None);
+
+        ssh_of_mut(&mut c).key_id = " k1 ".into();
+        c.normalize();
+        assert_eq!(c.key_ref(), Some("k1"));
+        assert!(c.secrets_mut().is_empty(), "私钥密码跟着密钥保存");
+
+        ssh_of_mut(&mut c).auth = AuthType::Password;
+        c.normalize();
+        assert_eq!(ssh_of(&c).key_id, "");
+        assert_eq!(c.key_ref(), None);
     }
 
     #[test]
@@ -534,10 +607,6 @@ pub(crate) mod tests {
         let p = ssh_of_mut(&mut c);
         p.port = 70000;
         assert_eq!(c.validate().unwrap_err().i18n, "err.conn.portInvalid");
-        let p = ssh_of_mut(&mut c);
-        p.port = 22;
-        p.auth = AuthType::Key;
-        assert_eq!(c.validate().unwrap_err().i18n, "err.conn.keyPathRequired");
     }
 
     #[test]
@@ -549,6 +618,8 @@ pub(crate) mod tests {
         assert_eq!(v["jumpId"], "j");
         assert_eq!(v["auth"], "password");
         assert!(v.get("password").is_none());
+        assert!(v.get("keyData").is_none());
+        assert!(v.get("keyPassphrase").is_none());
         assert!(v.get("production").is_none(), "不是生产环境时不写这个字段");
         assert!(v.get("incognito").is_none(), "未开无痕时不写这个字段");
         assert!(v.get("sftpSudo").is_none(), "按工具设置时不写这个字段");
@@ -585,10 +656,10 @@ pub(crate) mod tests {
     #[test]
     fn save_request_from_frontend() {
         let json = r#"{"id":"","name":"","group":"生产","color":"","note":"","kind":"ssh","host":"10.0.0.12","port":22,
-            "user":"deploy","auth":"password","keyPath":"","password":"secret","keyPassphrase":"","jumpId":"s1",
-            "keepaliveSeconds":30,"initDir":"","production":true,"clearPassword":false,"clearKeyPassphrase":true}"#;
+            "user":"deploy","auth":"password","keyId":"","password":"secret","jumpId":"s1",
+            "keepaliveSeconds":30,"initDir":"","production":true,"clearPassword":true}"#;
         let req: SaveConnReq = serde_json::from_str(json).unwrap();
-        assert!(req.clear_key_passphrase);
+        assert!(req.clear_password);
         assert_eq!(req.conn.group, "生产");
         assert!(req.conn.production);
         let p = ssh_of(&req.conn);

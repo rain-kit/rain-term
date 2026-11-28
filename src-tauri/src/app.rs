@@ -11,6 +11,7 @@ use crate::events::{self, EventSink};
 use crate::secrets::{FileBackend, Secrets};
 use crate::service::conn::ConnService;
 use crate::service::hostkey::HostKeyService;
+use crate::service::keys::KeyService;
 use crate::service::monitor::MonitorService;
 use crate::service::pool::ClientPool;
 use crate::service::rdp::RdpService;
@@ -25,6 +26,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub config: Mutex<AppConfig>,
     pub conns: Arc<ConnService>,
+    pub keys: Arc<KeyService>,
     pub host_keys: Arc<HostKeyService>,
     pub pool: Arc<ClientPool>,
     pub sessions: Arc<SessionService>,
@@ -84,6 +86,7 @@ pub fn setup(
         host_keys.clone(),
         sink,
     ));
+    let keys = conns.keys().clone();
     let pool = ClientPool::new(conns.clone());
     let sessions = SessionService::new(conns.clone(), pool.clone());
     let sftp = SftpService::new(conns.clone(), pool.clone());
@@ -95,6 +98,7 @@ pub fn setup(
         data_dir,
         config: Mutex::new(cfg),
         conns,
+        keys,
         host_keys,
         pool,
         sessions,

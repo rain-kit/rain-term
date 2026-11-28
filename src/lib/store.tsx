@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { connApi, errorMessage, events, hostKeyApi, settingsApi, updateApi } from "./api";
+import { connApi, errorMessage, events, hostKeyApi, keyApi, settingsApi, updateApi } from "./api";
 import { setLanguage, t } from "./i18n";
-import type { ConnView, HostKeyPrompt, Settings, SettingsInput, UpdateInfo } from "./types";
+import type { ConnView, HostKeyPrompt, Settings, SettingsInput, SshKey, UpdateInfo } from "./types";
 
 // ---------- 提示 ----------
 
@@ -177,6 +177,34 @@ function ConnsProvider({ children }: { children: ReactNode }) {
   return <ConnsContext.Provider value={value}>{children}</ConnsContext.Provider>;
 }
 
+// ---------- 密钥管理 ----------
+
+interface KeysCtx {
+  keys: SshKey[];
+  refresh: () => Promise<void>;
+}
+
+const KeysContext = createContext<KeysCtx>(null!);
+export const useKeys = () => useContext(KeysContext);
+
+function KeysProvider({ children }: { children: ReactNode }) {
+  const toast = useToast();
+  const [keys, setKeys] = useState<SshKey[]>([]);
+  const refresh = useCallback(async () => {
+    try {
+      setKeys(await keyApi.list());
+    } catch (e) {
+      toast.error(e);
+    }
+  }, []);
+  useEffect(() => {
+    refresh();
+    return events.onKeysChanged(refresh);
+  }, [refresh]);
+  const value = useMemo(() => ({ keys, refresh }), [keys, refresh]);
+  return <KeysContext.Provider value={value}>{children}</KeysContext.Provider>;
+}
+
 // ---------- 主机指纹确认 ----------
 
 interface HostKeyCtx {
@@ -337,9 +365,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <ToastProvider>
       <SettingsProvider>
         <ConnsProvider>
-          <UpdateProvider>
-            <HostKeyProvider>{children}</HostKeyProvider>
-          </UpdateProvider>
+          <KeysProvider>
+            <UpdateProvider>
+              <HostKeyProvider>{children}</HostKeyProvider>
+            </UpdateProvider>
+          </KeysProvider>
         </ConnsProvider>
       </SettingsProvider>
     </ToastProvider>

@@ -10,21 +10,22 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use super::hostkey::HostKeyService;
+use super::keys::KeyService;
 use crate::config::ToolsConfig;
 use crate::core::rdp::{self, RdpTarget};
 use crate::core::ssh::jump::{self, Hop};
+use crate::core::ssh::keyfile::MAX_KEY_SIZE;
 use crate::core::ssh::{self, SshTarget};
 use crate::error::{self, ApiError, ApiResult};
 use crate::events::{self, EventSink};
-use crate::i18n::pick;
+use crate::i18n::{Msg, pick};
 use crate::model::{
     AuthType, ConnParams, ConnView, Connection, DEFAULT_RDP_HEIGHT, DEFAULT_RDP_WIDTH, RdpParams,
     SaveConnReq, SshParams, TestResult, validate_refs,
 };
 use crate::secrets::{self, Secrets};
 use crate::store::{ConnStore, StoreError};
-use crate::util::new_id;
-use crate::os_auth;
+use crate::util::{expand_home, new_id};
 
 impl From<StoreError> for ApiError {
     fn from(e: StoreError) -> Self {
@@ -61,24 +62,37 @@ const EXPORT_VERSION: u32 = 1;
 
 pub struct ConnService {
     store: ConnStore,
-    secrets: Secrets,
+    secrets: Arc<Secrets>,
+    keys: Arc<KeyService>,
     host_keys: Arc<HostKeyService>,
     events: Arc<dyn EventSink>,
 }
 
 impl ConnService {
+    /// 密钥管理和连接共用 secrets，列表保存在 connections.json 旁边的 keys.json。
     pub fn new(
         store: ConnStore,
         secrets: Secrets,
         host_keys: Arc<HostKeyService>,
         events: Arc<dyn EventSink>,
     ) -> Self {
+        let secrets = Arc::new(secrets);
+        let keys = Arc::new(KeyService::new(
+            store.dir().join("keys.json"),
+            secrets.clone(),
+            events.clone(),
+        ));
         ConnService {
             store,
             secrets,
+            keys,
             host_keys,
             events,
         }
+    }
+
+    pub fn keys(&self) -> &Arc<KeyService> {
+        &self.keys
     }
 
     fn changed(&self) {
@@ -98,52 +112,112 @@ impl ConnService {
         Ok(self.view(self.store.get(id)?))
     }
 
-    /// 读取连接并填入已保存的密码，供建立 SSH 连接时使用。
+    /// 读取连接并填入已保存的密码和私钥，供建立 SSH 连接时使用。
     pub fn resolve(&self, id: &str) -> ApiResult<Connection> {
         let mut c = self.store.get(id)?;
-        self.secrets
-            .fill(&mut c)
-            .map_err(|e| error::SECRET_READ_FAILED.cause(e))?;
+        self.fill_secrets(&mut c)?;
         Ok(c)
     }
 
-    /// 验证电脑密码后读取连接保存的密码；用户取消验证时返回 None。
-    /// `parent` 是验证对话框所属窗口的句柄。
-    pub async fn reveal_password(&self, id: &str, parent: Option<isize>) -> ApiResult<Option<String>> {
-        let c = self.store.get(id)?;
-        let password_auth = match &c.params {
-            ConnParams::Ssh(p) => p.auth == AuthType::Password,
-            ConnParams::Rdp(_) => true,
-        };
-        if !password_auth || !self.secrets.has(id, secrets::PASSWORD) {
-            return Err(error::CONN_INVALID.msg(msg!("err.conn.noPassword", "这个连接没有保存密码")));
-        }
-        let passed = tokio::task::spawn_blocking(move || os_auth::verify(parent))
-            .await
-            .map_err(|e| error::SERVICE_ERROR.cause(e))?
-            .map_err(|e| {
-                warn!(conn = %c.name, err = %e.text(), "验证电脑密码失败");
-                error::OS_AUTH_FAILED.msg(e)
-            })?;
-        if !passed {
-            return Ok(None);
-        }
-        info!(conn = %c.name, "已验证电脑密码，查看保存的密码");
+    fn fill_secrets(&self, c: &mut Connection) -> ApiResult<()> {
         self.secrets
-            .get(id, secrets::PASSWORD)
-            .map(Some)
-            .map_err(|e| error::SECRET_READ_FAILED.cause(e))
+            .fill(c)
+            .map_err(|e| error::SECRET_READ_FAILED.cause(e))?;
+        self.fill_key(c)
+    }
+
+    /// 填入所选密钥的私钥内容和私钥密码。
+    fn fill_key(&self, c: &mut Connection) -> ApiResult<()> {
+        let Some(id) = c.key_ref().map(str::to_string) else {
+            return Ok(());
+        };
+        let (text, passphrase) = self.keys.material(&id)?;
+        if let ConnParams::Ssh(p) = &mut c.params {
+            p.key_data = text;
+            p.key_passphrase = passphrase;
+        }
+        Ok(())
+    }
+
+    /// 私钥认证要选择密钥管理里已有的密钥。
+    fn check_key(&self, c: &Connection) -> ApiResult<()> {
+        let ConnParams::Ssh(p) = &c.params else {
+            return Ok(());
+        };
+        if p.auth != AuthType::Key {
+            return Ok(());
+        }
+        if p.key_id.is_empty() {
+            return Err(error::CONN_INVALID.msg(msg!("err.conn.keyRequired", "私钥认证需要选择密钥")));
+        }
+        match self.keys.get(&p.key_id) {
+            Ok(_) => Ok(()),
+            Err(e) if e.code == error::KEY_NOT_FOUND.0 => Err(error::CONN_INVALID.msg(msg!(
+                "err.conn.keyNotFound",
+                "所选密钥不存在，可能已被删除"
+            ))),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// 删除密钥。还有连接在用时拒绝删除，并返回这些连接的名称。
+    pub fn delete_key(&self, id: &str) -> ApiResult<()> {
+        let users: Vec<String> = self
+            .store
+            .list()?
+            .into_iter()
+            .filter(|c| c.key_ref() == Some(id))
+            .map(|c| c.name)
+            .collect();
+        if !users.is_empty() {
+            let names = users.join(pick(["、", "、", ", "]));
+            return Err(error::KEY_IN_USE.msg(msg!(
+                "err.keyInUse",
+                "以下连接正在使用这个密钥，请先修改这些连接：{names}",
+                names
+            )));
+        }
+        self.keys.remove(id)
+    }
+
+    /// 读取私钥文件导入密钥管理，返回密钥 ID；同一个私钥已经导入过时返回已有的。
+    fn import_key_file(&self, path: &str, passphrase: &str) -> Result<String, Msg> {
+        let full = expand_home(path);
+        let read_failed = |e: std::io::Error| {
+            let path = full.display();
+            msg!("err.ssh.keyReadFailed", "读取私钥 {path} 失败", path).with_cause(e)
+        };
+        let size = std::fs::metadata(&full).map_err(read_failed)?.len();
+        if size > MAX_KEY_SIZE as u64 {
+            return Err(msg!("err.key.notKeyFile", "不是私钥文件"));
+        }
+        let text = std::fs::read_to_string(&full).map_err(read_failed)?;
+        let name = full
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.keys
+            .add(&name, &text, passphrase)
+            .map(|(k, _)| k.id)
+            .map_err(|e| e.msg)
+    }
+
+    /// 导入的连接引用了这台电脑上没有的密钥时去掉引用，之后编辑连接重新选择。
+    fn unlink_missing_key(&self, c: &mut Connection) {
+        let name = c.name.clone();
+        if let ConnParams::Ssh(p) = &mut c.params
+            && !p.key_id.is_empty()
+            && self.keys.get(&p.key_id).is_err()
+        {
+            warn!(conn = %name, "导入的连接引用的密钥不在这台电脑上，需要重新选择");
+            p.key_id.clear();
+        }
     }
 
     fn view(&self, mut c: Connection) -> ConnView {
         let has_password = self.secrets.has(&c.id, secrets::PASSWORD);
-        let has_key_passphrase = self.secrets.has(&c.id, secrets::KEY_PASSPHRASE);
         c.clear_secrets();
-        ConnView {
-            conn: c,
-            has_password,
-            has_key_passphrase,
-        }
+        ConnView { conn: c, has_password }
     }
 
     /// 新建（ID 为空）或修改连接。
@@ -152,6 +226,7 @@ impl ConnService {
         let is_new = c.id.is_empty();
         c.normalize();
         c.validate().map_err(|e| error::CONN_INVALID.msg(e))?;
+        self.check_key(&c)?;
         let saved = self.store.modify(|list| {
             if is_new {
                 c.id = new_id();
@@ -164,7 +239,7 @@ impl ConnService {
                 c.created_at = old.created_at;
             }
             validate_refs(&c, list).map_err(|e| error::CONN_INVALID.msg(e))?;
-            self.store_secrets(&mut c, is_new, req.clear_password, req.clear_key_passphrase)?;
+            self.store_secrets(&mut c, is_new, req.clear_password)?;
             match list.iter_mut().find(|x| x.id == c.id) {
                 Some(slot) => *slot = c.clone(),
                 None => list.push(c.clone()),
@@ -177,13 +252,7 @@ impl ConnService {
     }
 
     /// 写入当前类型用得到的密码：有值时保存，勾选清除时删除，否则保持原值；用不到的种类一律删除。
-    fn store_secrets(
-        &self,
-        c: &mut Connection,
-        is_new: bool,
-        clear_password: bool,
-        clear_passphrase: bool,
-    ) -> ApiResult<()> {
+    fn store_secrets(&self, c: &mut Connection, is_new: bool, clear: bool) -> ApiResult<()> {
         let id = c.id.clone();
         let name = c.name.clone();
         let used: Vec<(&str, String)> = c
@@ -192,11 +261,6 @@ impl ConnService {
             .map(|(k, v)| (k, std::mem::take(v)))
             .collect();
         for kind in secrets::KINDS {
-            let clear = if kind == secrets::PASSWORD {
-                clear_password
-            } else {
-                clear_passphrase
-            };
             let value = match used.iter().find(|(k, _)| *k == kind) {
                 Some((_, v)) if !v.is_empty() => v.as_str(),
                 Some(_) if !clear => continue,
@@ -218,7 +282,7 @@ impl ConnService {
         c.id = new_id();
         c.created_at = Some(Local::now());
         c.name.push_str(pick([" 副本", " 副本", " Copy"]));
-        self.store_secrets(&mut c, true, false, false)?;
+        self.store_secrets(&mut c, true, false)?;
         let copy = c.clone();
         self.store.modify(|list| {
             let at = list
@@ -341,11 +405,17 @@ impl ConnService {
     /// 导入 FinalShell 的数据目录、`conn` 目录或其中某一层文件夹；FinalShell 的密码会解密后保存。
     /// 选中单个 `*_connect_config.json` 时只导入这一台，并向上查找分组名和私钥。
     pub fn import_finalshell(&self, path: &Path) -> ApiResult<usize> {
-        let keys_dir = self.store.dir();
+        let mut import_key = |name: &str, text: &str, passphrase: &str| {
+            self.keys
+                .add(name, text, passphrase)
+                .inspect_err(|e| warn!(key = name, err = %e.msg.text(), "FinalShell 私钥没能导入密钥管理"))
+                .ok()
+                .map(|(k, _)| k.id)
+        };
         let conns = if path.is_dir() {
-            super::finalshell::load_dir(path, &keys_dir)
+            super::finalshell::load_dir(path, &mut import_key)
         } else {
-            let Some(conns) = super::finalshell::load_file(path, &keys_dir) else {
+            let Some(conns) = super::finalshell::load_file(path, &mut import_key) else {
                 return Err(
                     error::IMPORT_FAILED.msg(msg!("err.import.invalidFile", "文件格式不正确"))
                 );
@@ -355,10 +425,21 @@ impl ConnService {
         self.commit_import(conns, true)
     }
 
-    /// 导入 MobaXterm 的会话文件。导出的会话不含密码。
+    /// 导入 MobaXterm 的会话文件。导出的会话不含密码；会话引用的私钥文件导入密钥管理，带密码的私钥导入不了，之后再选择密钥。
     pub fn import_mobaxterm(&self, path: &Path) -> ApiResult<usize> {
         let text = read_moba_text(path)?;
-        let Some(conns) = super::mobaxterm::parse(&text) else {
+        let mut imported: HashMap<String, Option<String>> = HashMap::new();
+        let mut import_key = |key_path: &str| {
+            imported
+                .entry(key_path.to_string())
+                .or_insert_with(|| {
+                    self.import_key_file(key_path, "")
+                        .inspect_err(|e| warn!(path = key_path, err = %e.text(), "MobaXterm 私钥没能导入密钥管理"))
+                        .ok()
+                })
+                .clone()
+        };
+        let Some(conns) = super::mobaxterm::parse(&text, &mut import_key) else {
             return Err(error::IMPORT_FAILED.msg(msg!("err.import.invalidFile", "文件格式不正确")));
         };
         self.commit_import(conns, false)
@@ -387,6 +468,7 @@ impl ConnService {
                 // FinalShell 的 proxy_id 经常不是 SSH 跳板，对不上就留空，不让整批失败。
                 r.clear();
             }
+            self.unlink_missing_key(c);
             if !keep_secrets {
                 c.clear_secrets();
             }
@@ -410,7 +492,7 @@ impl ConnService {
             }
             if keep_secrets {
                 for c in &mut conns {
-                    self.store_secrets(c, true, false, false)?;
+                    self.store_secrets(c, true, false)?;
                 }
             }
             list.extend(conns);
@@ -426,15 +508,11 @@ impl ConnService {
         let mut c = req.conn;
         c.normalize();
         c.validate().map_err(|e| error::CONN_INVALID.msg(e))?;
+        self.check_key(&c)?;
         if !c.id.is_empty() {
             let id = c.id.clone();
             for (kind, value) in c.secrets_mut() {
-                let clear = if kind == secrets::PASSWORD {
-                    req.clear_password
-                } else {
-                    req.clear_key_passphrase
-                };
-                if value.is_empty() && !clear {
+                if value.is_empty() && !req.clear_password {
                     *value = self
                         .secrets
                         .get(&id, kind)
@@ -442,6 +520,7 @@ impl ConnService {
                 }
             }
         }
+        self.fill_key(&mut c)?;
         validate_refs(&c, &self.store.list()?).map_err(|e| error::CONN_INVALID.msg(e))?;
         match &c.params {
             ConnParams::Ssh(p) => self.test_ssh(&c, p).await,
@@ -524,9 +603,7 @@ impl ConnService {
                 .find(|x| x.id == next)
                 .cloned()
                 .ok_or(error::CONN_NOT_FOUND)?;
-            self.secrets
-                .fill(&mut j)
-                .map_err(|e| error::SECRET_READ_FAILED.cause(e))?;
+            self.fill_secrets(&mut j)?;
             next = j.jump_ref().unwrap_or_default().to_string();
             jumps.push(j);
         }
@@ -597,9 +674,10 @@ mod tests {
 
     use super::*;
     use crate::core::rdp::cert::CertStore;
+    use crate::core::ssh::keyfile::{self, KeyKind};
     use crate::core::ssh::known_hosts::HostKeyStore;
     use crate::model::tests::{rdp_of, ssh, ssh_of, ssh_of_mut};
-    use crate::model::{AuthType, ConnKind};
+    use crate::model::{AuthType, ConnKind, KeyImportReq};
     use crate::secrets::MemoryBackend;
     use base64::Engine;
 
@@ -712,30 +790,73 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn reveal_requires_saved_password() {
-        let f = fixture();
-        let mut key = ssh("key", "");
-        let p = ssh_of_mut(&mut key);
+    fn key_conn(name: &str, key_id: &str) -> Connection {
+        let mut c = ssh(name, "");
+        let p = ssh_of_mut(&mut c);
         p.auth = AuthType::Key;
-        p.key_path = "~/.ssh/id_ed25519".into();
-        let key = create(&f.svc, key).conn;
-        let cleared = create(&f.svc, ssh("cleared", "")).conn;
-        f.svc
-            .save(SaveConnReq {
-                conn: cleared.clone(),
-                clear_password: true,
+        p.key_id = key_id.into();
+        c.id.clear();
+        c
+    }
+
+    #[test]
+    fn key_auth_uses_managed_key() {
+        let f = fixture();
+        let save = |c: Connection| {
+            f.svc.save(SaveConnReq {
+                conn: c,
                 ..Default::default()
             })
+        };
+        assert_eq!(
+            save(key_conn("k", "")).unwrap_err().msg.i18n,
+            "err.conn.keyRequired"
+        );
+        assert_eq!(
+            save(key_conn("k", "missing")).unwrap_err().msg.i18n,
+            "err.conn.keyNotFound"
+        );
+
+        let text = keyfile::generate(KeyKind::Ed25519, "", "pw").unwrap();
+        let key = f
+            .svc
+            .keys
+            .import(KeyImportReq {
+                name: "k".into(),
+                content: text.clone(),
+                passphrase: "pw".into(),
+            })
             .unwrap();
-        for id in [&key.id, &cleared.id] {
-            let err = f.svc.reveal_password(id, None).await.unwrap_err();
-            assert_eq!(
-                (err.code, err.msg.i18n),
-                (error::CONN_INVALID.0, "err.conn.noPassword"),
-                "没有可查看的密码时不弹出电脑密码验证"
-            );
-        }
+        let v = save(key_conn("k", &key.id)).unwrap();
+        let got = f.svc.resolve(&v.conn.id).unwrap();
+        let p = ssh_of(&got);
+        assert_eq!(p.key_data.trim(), text.trim());
+        assert_eq!(p.key_passphrase, "pw");
+        assert!(
+            !serde_json::to_string(&f.svc.list().unwrap()).unwrap().contains("PRIVATE KEY"),
+            "连接列表不带私钥"
+        );
+
+        let err = f.svc.delete_key(&key.id).unwrap_err();
+        assert_eq!(err.code, error::KEY_IN_USE.0);
+        assert_eq!(
+            err.msg.params.get("names").map(|p| p.to_string()),
+            Some("k".into())
+        );
+        f.svc.delete(&v.conn.id).unwrap();
+        f.svc.delete_key(&key.id).unwrap();
+        assert!(f.svc.keys.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn imported_conn_drops_unknown_key() {
+        let f = fixture();
+        f.svc
+            .import(r#"[{"kind":"ssh","host":"h","user":"u","name":"far","auth":"key","keyId":"elsewhere"}]"#)
+            .unwrap();
+        let far = f.svc.list().unwrap().into_iter().find(|v| v.conn.name == "far").unwrap();
+        assert_eq!(ssh_of(&far.conn).auth, AuthType::Key);
+        assert_eq!(ssh_of(&far.conn).key_id, "");
     }
 
     #[test]
@@ -983,6 +1104,30 @@ win=#91#4%10.0.0.3%3389%admin%
     }
 
     #[test]
+    fn import_mobaxterm_keys() {
+        let f = fixture();
+        let key = write_file(&f, "id_moba", &keyfile::generate(KeyKind::Ed25519, "", "").unwrap());
+        let missing = f.dir.join("missing").display().to_string();
+        let session = |name: &str, host: &str, key: &str| format!("{name}=#109#0%{host}%22%root%%-1%-1%%%%%0%0%0%{key}\n");
+        let text = format!(
+            "[Bookmarks]\n{}{}{}",
+            session("a", "10.0.0.1", &key.display().to_string()),
+            session("b", "10.0.0.2", &key.display().to_string()),
+            session("c", "10.0.0.3", &missing),
+        );
+        let path = write_file(&f, "keys.mxtsessions", &text);
+        assert_eq!(f.svc.import_mobaxterm(&path).unwrap(), 3);
+        let list = f.svc.list().unwrap();
+        let key_of = |name: &str| ssh_of(&list.iter().find(|v| v.conn.name == name).unwrap().conn).key_id.clone();
+        let keys = f.svc.keys.list().unwrap();
+        assert_eq!(keys.len(), 1, "同一个私钥文件只导入一次");
+        assert_eq!(keys[0].name, "id_moba");
+        assert_eq!(key_of("a"), keys[0].id);
+        assert_eq!(key_of("b"), keys[0].id);
+        assert_eq!(key_of("c"), "", "读不到的私钥文件留空，之后再选择密钥");
+    }
+
+    #[test]
     fn import_finalshell_keeps_decrypted_password() {
         let f = fixture();
         let import = |text: &str| {
@@ -1092,8 +1237,8 @@ win=#91#4%10.0.0.3%3389%admin%
         let other_dir = root.join("conn").join("host2");
         std::fs::create_dir_all(&host_dir).unwrap();
         std::fs::create_dir_all(&other_dir).unwrap();
-        let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nnot-a-real-key\n-----END OPENSSH PRIVATE KEY-----\n";
-        let pem_b64 = base64::engine::general_purpose::STANDARD.encode(pem);
+        let pem = keyfile::generate(KeyKind::Ed25519, "", "beac3d85988e").unwrap();
+        let pem_b64 = base64::engine::general_purpose::STANDARD.encode(&pem);
         std::fs::write(
             root.join("config.json"),
             format!(r#"{{"secret_key_list":[{{"id":"k1","name":"mykey","key_data":"{pem_b64}","password":"UU8hWV51DmVNgmX/pUd0LlaEo53VTa6s"}}]}}"#),
@@ -1129,14 +1274,17 @@ win=#91#4%10.0.0.3%3389%admin%
             .find(|v| v.conn.name == "keyed")
             .unwrap();
         assert_eq!(keyed.conn.group, "生产");
-        assert!(keyed.has_key_passphrase);
         let got = f.svc.resolve(&keyed.conn.id).unwrap();
         let p = ssh_of(&got);
         assert_eq!(p.auth, AuthType::Key);
         assert_eq!(p.key_passphrase, "beac3d85988e");
-        assert_eq!(std::fs::read_to_string(&p.key_path).unwrap(), pem);
+        assert_eq!(p.key_data, pem);
+        let key = f.svc.keys.get(&p.key_id).unwrap();
+        assert_eq!(key.name, "mykey");
+        assert!(key.encrypted);
 
         assert_eq!(f.svc.import_finalshell(&root).unwrap(), 2);
+        assert_eq!(f.svc.keys.list().unwrap().len(), 1, "同一个私钥不重复导入");
         let names: Vec<_> = f
             .svc
             .list()

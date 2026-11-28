@@ -43,7 +43,7 @@ impl ConnStore {
         }
     }
 
-    /// connections.json 所在的数据目录。导入的私钥写在其中的 keys 目录。
+    /// connections.json 所在的数据目录，密钥管理的 keys.json 也放在这里。
     pub fn dir(&self) -> PathBuf {
         self.path.parent().unwrap_or(Path::new(".")).to_path_buf()
     }

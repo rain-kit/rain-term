@@ -77,8 +77,6 @@ pub const PARAM_INVALID: Code = Code(2, "err.paramInvalid", "请求参数错误"
 pub const OPEN_URL_FAILED: Code = Code(4, "err.openUrlFailed", "打开链接失败");
 pub const SECRET_STORE_FAILED: Code = Code(5, "err.secretStoreFailed", "保存密码失败");
 pub const SECRET_READ_FAILED: Code = Code(6, "err.secretReadFailed", "读取已保存的密码失败");
-pub const OS_AUTH_FAILED: Code = Code(8, "err.osAuthFailed", "验证电脑密码失败");
-
 // -------------------- 连接 100000 -------------------- //
 pub const CONN_NOT_FOUND: Code = Code(100001, "err.connNotFound", "连接不存在");
 pub const CONN_INVALID: Code = Code(100002, "err.connInvalid", "连接配置无效");
@@ -120,6 +118,14 @@ pub const SFTP_SUDO_WRONG_PASSWORD: Code = Code(400005, "err.sftpSudoWrongPasswo
 // -------------------- 工作区 500000 -------------------- //
 pub const WORKSPACE_SAVE_FAILED: Code =
     Code(500001, "err.workspaceSaveFailed", "保存打开的标签失败");
+
+// -------------------- 密钥 700000 -------------------- //
+pub const KEY_NOT_FOUND: Code = Code(700001, "err.keyNotFound", "密钥不存在，可能已被删除");
+pub const KEY_INVALID: Code = Code(700002, "err.keyInvalid", "密钥无效");
+pub const KEY_EXISTS: Code = Code(700003, "err.keyExists", "这个密钥已经导入过");
+pub const KEY_IN_USE: Code = Code(700004, "err.keyInUse", "密钥正被连接使用");
+pub const KEY_FILE_IO: Code = Code(700005, "err.keyFileIo", "读写 keys.json 失败");
+pub const KEY_GENERATE_FAILED: Code = Code(700006, "err.keyGenerateFailed", "生成密钥失败");
 
 // -------------------- 远程桌面 600000 -------------------- //
 pub const RDP_CONNECT_FAILED: Code = Code(600001, "err.rdpConnectFailed", "远程桌面连接失败");

@@ -147,11 +147,9 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   );
 });
 
-/** revealed 变化时跟着切换明文或密文显示。 */
-export function PasswordInput({ revealed = false, ...props }: Omit<InputProps, "type" | "suffix"> & { revealed?: boolean }) {
+export function PasswordInput(props: Omit<InputProps, "type" | "suffix">) {
   const { t } = useI18n();
-  const [show, setShow] = useState(revealed);
-  useEffect(() => setShow(revealed), [revealed]);
+  const [show, setShow] = useState(false);
   return (
     <Input
       {...props}
@@ -326,6 +324,9 @@ export function Empty({ icon, title, desc, action }: { icon: ReactNode; title: s
 
 // ---------- 对话框 ----------
 
+/** 打开着的对话框，按打开顺序排列；对话框里还能再打开对话框，Esc 只关闭最上面的一个。 */
+const openDialogs: symbol[] = [];
+
 export function Dialog({
   open,
   onClose,
@@ -342,12 +343,19 @@ export function Dialog({
   footer?: ReactNode;
 }) {
   const { t } = useI18n();
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
-    if (!open || !onClose) return;
-    const fn = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    if (!open) return;
+    const id = Symbol();
+    openDialogs.push(id);
+    const fn = (e: KeyboardEvent) => e.key === "Escape" && openDialogs.at(-1) === id && close.current?.();
     window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
-  }, [open, onClose]);
+    return () => {
+      openDialogs.splice(openDialogs.indexOf(id), 1);
+      window.removeEventListener("keydown", fn);
+    };
+  }, [open]);
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6">

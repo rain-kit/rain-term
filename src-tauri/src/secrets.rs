@@ -13,8 +13,11 @@ use crate::model::Connection;
 use crate::util::write_file_atomic;
 
 pub const PASSWORD: &str = "password";
+/// 连接用到的密码种类。
+pub const KINDS: [&str; 1] = [PASSWORD];
+/// 密钥管理里的私钥内容和私钥密码，按密钥 ID 保存。
+pub const PRIVATE_KEY: &str = "privateKey";
 pub const KEY_PASSPHRASE: &str = "keyPassphrase";
-pub const KINDS: [&str; 2] = [PASSWORD, KEY_PASSPHRASE];
 
 /// 密码存储后端：正式运行用加密文件，测试用内存实现。
 pub trait SecretBackend: Send + Sync {
@@ -24,7 +27,7 @@ pub trait SecretBackend: Send + Sync {
     fn delete(&self, conn_id: &str, kind: &str) -> Result<(), String>;
 }
 
-/// 按连接 ID 保存密码类信息：SSH 密码、私钥密码。
+/// 按连接 ID 保存连接密码，按密钥 ID 保存密钥管理的私钥和私钥密码。
 pub struct Secrets {
     backend: Box<dyn SecretBackend>,
 }
@@ -98,7 +101,7 @@ struct FileState {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SecretData {
-    /// 连接 ID → 密码类型 → 密码。
+    /// 连接或密钥 ID → 密码类型 → 密码。
     #[serde(default)]
     secrets: BTreeMap<String, BTreeMap<String, String>>,
 }
@@ -340,11 +343,9 @@ mod tests {
     fn delete_all_only_touches_one_connection() {
         let s = Secrets::new(Box::new(MemoryBackend::default()));
         s.set("c1", PASSWORD, "a").unwrap();
-        s.set("c1", KEY_PASSPHRASE, "b").unwrap();
         s.set("c2", PASSWORD, "c").unwrap();
         s.delete_all("c1").unwrap();
         assert!(!s.has("c1", PASSWORD));
-        assert!(!s.has("c1", KEY_PASSPHRASE));
         assert_eq!(s.get("c2", PASSWORD).unwrap(), "c");
     }
 

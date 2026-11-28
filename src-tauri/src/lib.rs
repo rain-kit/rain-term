@@ -8,7 +8,6 @@ pub mod error;
 pub mod events;
 pub mod logging;
 pub mod model;
-pub mod os_auth;
 pub mod secrets;
 pub mod service;
 pub mod store;
@@ -51,12 +50,17 @@ pub fn run() {
             commands::conn::conn_reorder,
             commands::conn::conn_move,
             commands::conn::conn_test,
-            commands::conn::conn_reveal_password,
             commands::conn::conn_export,
             commands::conn::conn_import,
             commands::conn::conn_import_dir,
             commands::conn::conn_import_moba,
-            commands::conn::pick_key_file,
+            commands::keys::key_list,
+            commands::keys::key_import,
+            commands::keys::key_generate,
+            commands::keys::key_rename,
+            commands::keys::key_delete,
+            commands::keys::key_read_file,
+            commands::keys::key_export,
             commands::ssh::hostkey_pending,
             commands::ssh::hostkey_answer,
             commands::ssh::session_open,

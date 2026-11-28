@@ -1,13 +1,24 @@
-import { FolderOpen, PlugZap } from "lucide-react";
+import { PlugZap, Plus } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { connApi } from "../lib/api";
 import { loadGroups } from "../lib/groups";
-import { CONN_COLORS, connAddress, DEFAULT_PORT, DEFAULT_USER, KIND_LABEL, RDP_MAX_SIZE, RDP_MIN_SIZE, type ConnColor } from "../lib/format";
+import {
+  CONN_COLORS,
+  connAddress,
+  DEFAULT_PORT,
+  DEFAULT_USER,
+  KIND_LABEL,
+  keyTypeLabel,
+  RDP_MAX_SIZE,
+  RDP_MIN_SIZE,
+  type ConnColor,
+} from "../lib/format";
 import { t, useI18n } from "../lib/i18n";
-import { useConns, useSettings, useToast } from "../lib/store";
+import { useConns, useKeys, useSettings, useToast } from "../lib/store";
 import type { AuthType, ConnKind, ConnView, RdpResolution, SaveConnReq, SftpSudo } from "../lib/types";
+import KeysDialog from "./KeysDialog";
 import KindIcon from "./KindIcon";
-import { Button, cx, Dialog, Field, IconButton, Input, PasswordInput, Segmented, Select, SwitchRow } from "./ui";
+import { Button, cx, Dialog, Field, Input, PasswordInput, Segmented, Select, SwitchRow } from "./ui";
 
 interface Form {
   kind: ConnKind;
@@ -24,8 +35,7 @@ interface Form {
   // SSH
   incognito: boolean;
   auth: AuthType;
-  keyPath: string;
-  keyPassphrase: string;
+  keyId: string;
   keepaliveSeconds: string;
   initDir: string;
   sftpSudo: SftpSudo;
@@ -59,8 +69,7 @@ function toForm(c?: ConnView | null): Form {
     jumpId: c?.jumpId ?? "",
     incognito: !!ssh?.incognito,
     auth: ssh?.auth ?? "password",
-    keyPath: ssh?.keyPath ?? "",
-    keyPassphrase: "",
+    keyId: ssh?.keyId ?? "",
     keepaliveSeconds: String(ssh?.keepaliveSeconds ?? 30),
     initDir: ssh?.initDir ?? "",
     sftpSudo: ssh?.sftpSudo ?? "default",
@@ -80,7 +89,7 @@ function validate(f: Form): Errors {
   if (!isInt(f.port, 1, 65535)) e.port = t("editor.err.port");
   if (!f.user.trim()) e.user = t("editor.required");
   if (f.kind === "ssh") {
-    if (f.auth === "key" && !f.keyPath.trim()) e.keyPath = t("editor.err.keyPath");
+    if (f.auth === "key" && !f.keyId) e.keyId = t("editor.err.keyRequired");
     if (!isInt(f.keepaliveSeconds, 0, 3600)) e.keepaliveSeconds = t("editor.err.keepalive");
   } else if (f.resolution === "fixed") {
     const msg = t("editor.err.rdpSize", { min: RDP_MIN_SIZE, max: RDP_MAX_SIZE });
@@ -119,9 +128,8 @@ function toReq(f: Form, id: string): SaveConnReq {
     ...common,
     kind: "ssh",
     auth: f.auth,
-    keyPath: f.auth === "key" ? f.keyPath.trim() : "",
+    keyId: f.auth === "key" ? f.keyId : "",
     password: f.auth === "password" ? f.password : "",
-    keyPassphrase: f.auth === "key" ? f.keyPassphrase : "",
     keepaliveSeconds: Number(f.keepaliveSeconds),
     initDir: f.initDir.trim(),
     sftpSudo: f.sftpSudo,
@@ -146,37 +154,18 @@ function SecretField({
   saved,
   value,
   hint,
-  revealing,
-  revealed,
   onChange,
-  onReveal,
 }: {
   label: string;
   saved: boolean;
   value: string;
   hint?: string;
-  revealing?: boolean;
-  revealed?: boolean;
   onChange: (v: string) => void;
-  /** 不传时不能查看保存的密码。 */
-  onReveal?: () => void;
 }) {
   const { t } = useI18n();
-  const link = "ml-1.5 text-accent hover:underline disabled:opacity-50 disabled:no-underline";
-  const savedHint = saved ? (
-    <>
-      {t("editor.secretSaved")}
-      {onReveal && !value && (
-        <button type="button" className={link} disabled={revealing} onClick={onReveal}>
-          {t(revealing ? "editor.secretRevealing" : "editor.secretReveal")}
-        </button>
-      )}
-    </>
-  ) : null;
   return (
-    <Field label={label} hint={savedHint ?? hint}>
+    <Field label={label} hint={saved ? t("editor.secretSaved") : hint}>
       <PasswordInput
-        revealed={revealed}
         value={value}
         placeholder={saved ? "••••••••" : undefined}
         onChange={(e) => onChange(e.target.value)}
@@ -205,8 +194,8 @@ export default function ConnEditor({
   const [form, setForm] = useState<Form>(() => toForm(conn));
   const [errors, setErrors] = useState<Errors>({});
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
-  const [revealing, setRevealing] = useState(false);
-  const [revealed, setRevealed] = useState(false);
+  const { keys } = useKeys();
+  const [manageKeys, setManageKeys] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -214,7 +203,6 @@ export default function ConnEditor({
     if (!conn && group) next.group = group;
     setForm(next);
     setErrors({});
-    setRevealed(false);
   }, [open, conn, group]);
 
   const f = form;
@@ -251,32 +239,12 @@ export default function ConnEditor({
     return conns.filter((c) => c.kind === "ssh" && !(conn && passesSelf(c.id)));
   }, [conns, conn]);
 
-  const pickKey = async () => {
-    try {
-      const p = await connApi.pickKeyFile();
-      if (p) set("keyPath", p);
-    } catch (e) {
-      toast.error(e);
-    }
-  };
-
-  // 只有按密码认证保存的连接才能查看密码，查看前要先通过电脑密码验证。
-  const canReveal = !!conn?.hasPassword && (conn.kind === "rdp" || conn.auth === "password");
-  const reveal = async () => {
-    if (!conn) return;
-    setRevealing(true);
-    try {
-      const password = await connApi.revealPassword(conn.id);
-      if (password !== null) {
-        set("password", password);
-        setRevealed(true);
-      }
-    } catch (e) {
-      toast.error(e);
-    } finally {
-      setRevealing(false);
-    }
-  };
+  const keyOptions = useMemo(() => {
+    const opts = keys.map((k) => ({ value: k.id, label: `${k.name} · ${keyTypeLabel(k)}` }));
+    // 选中的密钥已被删除时也显示出来，保存时由后端报错。
+    if (f.keyId && !keys.some((k) => k.id === f.keyId)) opts.push({ value: f.keyId, label: t("editor.keyMissing") });
+    return [{ value: "", label: t(keys.length ? "editor.keyNone" : "editor.keyEmpty") }, ...opts];
+  }, [keys, f.keyId, t]);
 
   const check = () => {
     const errs = validate(f);
@@ -383,10 +351,7 @@ export default function ConnEditor({
               label={t("editor.password")}
               saved={!!conn?.hasPassword}
               value={f.password}
-              revealing={revealing}
-              revealed={revealed}
               onChange={(v) => set("password", v)}
-              onReveal={canReveal ? reveal : undefined}
             />
           </>
         ) : (
@@ -412,36 +377,18 @@ export default function ConnEditor({
                 label={t("editor.password")}
                 saved={!!conn?.hasPassword}
                 value={f.password}
-                revealing={revealing}
-                revealed={revealed}
                 onChange={(v) => set("password", v)}
-                onReveal={canReveal ? reveal : undefined}
               />
             )}
             {f.auth === "key" && (
-              <>
-                <Field label={t("editor.keyPath")} error={errors.keyPath}>
-                  <Input
-                    mono
-                    placeholder="~/.ssh/id_ed25519"
-                    value={f.keyPath}
-                    invalid={!!errors.keyPath}
-                    onChange={(e) => set("keyPath", e.target.value)}
-                    suffix={
-                      <IconButton label={t("editor.pickFile")} size="sm" type="button" onClick={pickKey}>
-                        <FolderOpen size={15} />
-                      </IconButton>
-                    }
-                  />
-                </Field>
-                <SecretField
-                  label={t("editor.keyPassphrase")}
-                  saved={!!conn?.hasKeyPassphrase}
-                  value={f.keyPassphrase}
-                  hint={t("editor.keyPassphraseHint")}
-                  onChange={(v) => set("keyPassphrase", v)}
-                />
-              </>
+              <Field label={t("editor.key")} error={errors.keyId} hint={t("editor.keyHint")}>
+                <div className="flex gap-2">
+                  <Select className="min-w-0 flex-1" value={f.keyId} onChange={(v) => set("keyId", v)} options={keyOptions} />
+                  <Button type="button" icon={<Plus size={14} />} onClick={() => setManageKeys(true)}>
+                    {t("editor.keyAdd")}
+                  </Button>
+                </div>
+              </Field>
             )}
             {f.auth === "agent" && <p className="text-xs text-muted">{t("editor.agentHint")}</p>}
           </>
@@ -569,6 +516,7 @@ export default function ConnEditor({
         </Field>
       </Section>
       <div className="h-2" />
+      <KeysDialog open={manageKeys} onClose={() => setManageKeys(false)} onAdded={(k) => set("keyId", k.id)} />
     </Dialog>
   );
 }

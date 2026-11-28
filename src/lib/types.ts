@@ -75,7 +75,8 @@ export interface SshParams {
   port: number;
   user: string;
   auth: AuthType;
-  keyPath?: string;
+  /** 私钥认证使用的密钥（密钥管理里的 SshKey） */
+  keyId?: string;
   /** 跳板机：另一个 SSH 连接的 ID */
   jumpId?: string;
   /** 保活间隔（秒），0 表示不发送 */
@@ -86,7 +87,6 @@ export interface SshParams {
   /** SFTP 是否用 sudo 以 root 身份打开，不传时按工具里的设置 */
   sftpSudo?: SftpSudo;
   password?: string;
-  keyPassphrase?: string;
 }
 
 /** default 表示按顶栏“工具”里的设置。 */
@@ -125,10 +125,10 @@ export type Connection = {
 } & ConnParams;
 
 /** 后端返回的连接不含密码，只告诉前端是否已保存。 */
-export type ConnView = Connection & { hasPassword: boolean; hasKeyPassphrase: boolean };
+export type ConnView = Connection & { hasPassword: boolean };
 
-/** 保存连接：密码类字段留空表示不修改，clear* 为 true 时删除已保存的值。 */
-export type SaveConnReq = Connection & { clearPassword?: boolean; clearKeyPassphrase?: boolean };
+/** 保存连接：密码留空表示不修改，clearPassword 为 true 时删除已保存的密码。 */
+export type SaveConnReq = Connection & { clearPassword?: boolean };
 
 export interface TestResult {
   elapsedMs: number;
@@ -138,6 +138,42 @@ export interface TestResult {
 export interface ExportResult {
   path: string;
   count: number;
+}
+
+// ---------- 密钥管理，见 src-tauri/src/service/keys.rs ----------
+
+/** 私钥保存在程序里，这里只有公开信息。 */
+export interface SshKey {
+  id: string;
+  name: string;
+  /** 如 ssh-ed25519、ssh-rsa、ecdsa-sha2-nistp256 */
+  algorithm: string;
+  /** RSA 密钥的位数 */
+  bits?: number;
+  /** SHA256:xxxx */
+  fingerprint: string;
+  /** authorized_keys 格式的一行公钥 */
+  publicKey: string;
+  /** 私钥设置了密码 */
+  encrypted: boolean;
+  createdAt?: string;
+}
+
+/** name 为空时用私钥的注释或类型。 */
+export interface KeyImportReq {
+  name: string;
+  content: string;
+  passphrase: string;
+}
+
+export type KeyType = "ed25519" | "ecdsa" | "rsa";
+
+/** bits 只对 RSA 有效。 */
+export interface KeyGenerateReq {
+  name: string;
+  type: KeyType;
+  bits?: number;
+  passphrase: string;
 }
 
 // ---------- SSH ----------

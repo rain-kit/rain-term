@@ -7,10 +7,9 @@ use russh::keys::agent::AgentIdentity;
 use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg};
 
-use super::{ClientHandler, SshError, SshTarget};
+use super::{ClientHandler, SshError, SshTarget, keyfile};
 use crate::i18n::Msg;
 use crate::model::AuthType;
-use crate::util::expand_home;
 
 type Agent = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
 
@@ -24,37 +23,21 @@ pub enum AuthMethod {
 pub async fn prepare(t: &SshTarget) -> Result<AuthMethod, SshError> {
     match t.auth {
         AuthType::Password => Ok(AuthMethod::Password(t.password.clone())),
-        AuthType::Key => {
-            load_key(&t.key_path, &t.key_passphrase).map(|k| AuthMethod::Key(Arc::new(k)))
-        }
+        AuthType::Key => load_key(t).map(|k| AuthMethod::Key(Arc::new(k))),
         AuthType::Agent => connect_agent().await.map(AuthMethod::Agent),
     }
 }
 
-fn load_key(path: &str, passphrase: &str) -> Result<PrivateKey, SshError> {
-    let full = expand_home(path);
-    let path = full.display();
-    let text = std::fs::read_to_string(&full).map_err(|e| {
-        SshError::Permanent(
-            msg!("err.ssh.keyReadFailed", "读取私钥 {path} 失败", path).with_cause(e),
-        )
-    })?;
-    match russh::keys::decode_secret_key(&text, None) {
-        Ok(k) => Ok(k),
-        Err(russh::keys::Error::KeyIsEncrypted) if passphrase.is_empty() => Err(
-            SshError::Permanent(msg!("err.ssh.keyEncrypted", "私钥已加密，需要填写私钥密码")),
-        ),
-        Err(russh::keys::Error::KeyIsEncrypted) => {
-            russh::keys::decode_secret_key(&text, Some(passphrase)).map_err(|e| {
-                SshError::Permanent(
-                    msg!("err.ssh.keyDecryptFailed", "解密私钥失败（密码错误？）").with_cause(e),
-                )
-            })
-        }
-        Err(e) => Err(SshError::Permanent(
-            msg!("err.ssh.keyParseFailed", "解析私钥 {path} 失败", path).with_cause(e),
-        )),
+fn load_key(t: &SshTarget) -> Result<PrivateKey, SshError> {
+    if t.key_data.is_empty() {
+        return Err(SshError::Permanent(msg!(
+            "err.ssh.keyMissing",
+            "这个连接还没有选择密钥，请编辑连接选择"
+        )));
     }
+    keyfile::decode(&t.key_data, &t.key_passphrase)
+        .map(|(k, _)| k)
+        .map_err(SshError::Permanent)
 }
 
 #[cfg(windows)]

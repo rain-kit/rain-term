@@ -1,10 +1,11 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Settings, Square, Wrench, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Copy, KeyRound, Minus, Settings, Square, Wrench, X } from "lucide-react";
+import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { isMac, isWindows } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useUpdate } from "../lib/store";
+import KeysDialog from "./KeysDialog";
 import ToolsDialog from "./ToolsDialog";
 import { cx, IconButton } from "./ui";
 
@@ -37,8 +38,16 @@ function WindowControls() {
   );
 }
 
-function ToolsButton() {
-  const { t } = useI18n();
+/** 顶栏左侧带文字的按钮，点开一个窗口。 */
+function DialogButton({
+  icon,
+  label,
+  dialog: Dlg,
+}: {
+  icon: ReactNode;
+  label: string;
+  dialog: ComponentType<{ open: boolean; onClose: () => void }>;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -49,15 +58,15 @@ function ToolsButton() {
           open ? "bg-subtle text-ink" : "text-muted",
         )}
       >
-        <Wrench size={15} />
-        {t("tools.title")}
+        {icon}
+        {label}
       </button>
-      <ToolsDialog open={open} onClose={() => setOpen(false)} />
+      <Dlg open={open} onClose={() => setOpen(false)} />
     </>
   );
 }
 
-/** 窗口顶栏，同时作为拖动区域：左侧是名称（点击回到终端）和工具，右侧是设置（再点一次回到终端）和 Windows 的窗口按钮。 */
+/** 窗口顶栏，同时作为拖动区域：左侧是名称（点击回到终端）、密钥和工具，右侧是设置（再点一次回到终端）和 Windows 的窗口按钮。 */
 export default function TopBar({ view, onChange }: { view: View; onChange: (v: View) => void }) {
   const { t } = useI18n();
   const update = useUpdate().info;
@@ -77,7 +86,8 @@ export default function TopBar({ view, onChange }: { view: View; onChange: (v: V
       </div>
 
       <div className="-ml-2 flex items-center gap-1">
-        <ToolsButton />
+        <DialogButton icon={<KeyRound size={15} />} label={t("keys.title")} dialog={KeysDialog} />
+        <DialogButton icon={<Wrench size={15} />} label={t("tools.title")} dialog={ToolsDialog} />
       </div>
 
       <div data-tauri-drag-region className="flex-1 self-stretch" />

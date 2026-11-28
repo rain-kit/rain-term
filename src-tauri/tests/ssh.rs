@@ -75,10 +75,10 @@ fn password_target(srv: &TestServer, password: &str) -> SshTarget {
     }
 }
 
-fn key_target(srv: &TestServer, path: &std::path::Path, passphrase: &str) -> SshTarget {
+fn key_target(srv: &TestServer, key_data: &str, passphrase: &str) -> SshTarget {
     SshTarget {
         auth: AuthType::Key,
-        key_path: path.display().to_string(),
+        key_data: key_data.into(),
         key_passphrase: passphrase.into(),
         ..password_target(srv, "")
     }
@@ -239,23 +239,14 @@ async fn key_auth() {
 
     let key = random_key();
     srv.authorize(key.public_key());
-    let plain = env.dir.join("id_plain");
-    std::fs::write(&plain, key.to_openssh(LineEnding::LF).unwrap().as_bytes()).unwrap();
-    let enc = env.dir.join("id_enc");
-    let encrypted = key
+    let plain = key.to_openssh(LineEnding::LF).unwrap().to_string();
+    let enc = key
         .encrypt(&mut russh::keys::key::safe_rng(), "s3cret")
-        .unwrap();
-    std::fs::write(
-        &enc,
-        encrypted.to_openssh(LineEnding::LF).unwrap().as_bytes(),
-    )
-    .unwrap();
-    let other = env.dir.join("id_other");
-    std::fs::write(
-        &other,
-        random_key().to_openssh(LineEnding::LF).unwrap().as_bytes(),
-    )
-    .unwrap();
+        .unwrap()
+        .to_openssh(LineEnding::LF)
+        .unwrap()
+        .to_string();
+    let other = random_key().to_openssh(LineEnding::LF).unwrap().to_string();
 
     dial(&key_target(&srv, &plain, ""), &opts).await.unwrap();
     dial(&key_target(&srv, &enc, "s3cret"), &opts)
@@ -266,14 +257,12 @@ async fn key_auth() {
         (key_target(&srv, &enc, ""), "err.ssh.keyEncrypted"),
         (key_target(&srv, &enc, "bad"), "err.ssh.keyDecryptFailed"),
         (key_target(&srv, &other, ""), "err.ssh.authDenied"),
-        (
-            key_target(&srv, &env.dir.join("missing"), ""),
-            "err.ssh.keyReadFailed",
-        ),
+        (key_target(&srv, "", ""), "err.ssh.keyMissing"),
+        (key_target(&srv, "not a key", ""), "err.ssh.keyParseFailed"),
     ];
     for (t, want) in cases {
         let e = expect_err(dial(&t, &opts).await);
-        assert_eq!(e.msg().i18n, want, "{}", t.key_path);
+        assert_eq!(e.msg().i18n, want);
         assert!(e.is_permanent());
     }
 }

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::{AppHandle, State, WebviewWindow, Wry};
+use tauri::{AppHandle, State, Wry};
 use tauri_plugin_dialog::{DialogExt, FileDialogBuilder};
 
 use crate::app::AppState;
@@ -50,26 +50,6 @@ pub async fn conn_move(s: S<'_>, id: String, group: String, ids: Vec<String>) ->
 #[tauri::command]
 pub async fn conn_test(s: S<'_>, req: SaveConnReq) -> ApiResult<TestResult> {
     s.conns.test(req).await
-}
-
-/// 验证电脑密码后返回连接保存的密码，取消验证时返回 None。
-#[tauri::command]
-pub async fn conn_reveal_password(
-    window: WebviewWindow,
-    s: S<'_>,
-    id: String,
-) -> ApiResult<Option<String>> {
-    s.conns.reveal_password(&id, window_handle(&window)).await
-}
-
-#[cfg(windows)]
-fn window_handle(window: &WebviewWindow) -> Option<isize> {
-    window.hwnd().ok().map(|h| h.0 as isize)
-}
-
-#[cfg(not(windows))]
-fn window_handle(_window: &WebviewWindow) -> Option<isize> {
-    None
 }
 
 #[derive(Serialize)]
@@ -159,24 +139,6 @@ pub async fn conn_import_moba(app: AppHandle, s: S<'_>) -> ApiResult<Option<usiz
     s.conns.import_mobaxterm(&path).map(Some)
 }
 
-/// 选择 SSH 私钥文件，取消时返回空字符串。
-#[tauri::command]
-pub async fn pick_key_file(app: AppHandle) -> ApiResult<String> {
-    let mut dlg = app.dialog().file().set_title(pick([
-        "选择 SSH 私钥",
-        "選擇 SSH 私鑰",
-        "Choose SSH private key",
-    ]));
-    if let Some(home) = dirs::home_dir() {
-        let ssh = home.join(".ssh");
-        dlg = dlg.set_directory(if ssh.is_dir() { ssh } else { home });
-    }
-    Ok(choose(dlg, false)
-        .await
-        .map(|p| p.display().to_string())
-        .unwrap_or_default())
-}
-
 async fn choose_folder(dlg: FileDialogBuilder<Wry>) -> Option<PathBuf> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     dlg.pick_folder(move |p| {
@@ -185,7 +147,7 @@ async fn choose_folder(dlg: FileDialogBuilder<Wry>) -> Option<PathBuf> {
     rx.await.ok().flatten().and_then(|p| p.into_path().ok())
 }
 
-async fn choose(dlg: FileDialogBuilder<Wry>, save: bool) -> Option<PathBuf> {
+pub(super) async fn choose(dlg: FileDialogBuilder<Wry>, save: bool) -> Option<PathBuf> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let done = move |p| {
         let _ = tx.send(p);

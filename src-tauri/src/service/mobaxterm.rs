@@ -38,12 +38,13 @@ struct Gateway {
 
 /// 文本像 MobaXterm 的会话导出时返回连接；否则返回 None。
 /// 文件里只有 Telnet 等不支持的会话时返回空列表。
-pub(crate) fn parse(text: &str) -> Option<Vec<Connection>> {
+/// `import_key` 把会话引用的私钥文件导入密钥管理，返回密钥 ID。
+pub(crate) fn parse(text: &str, import_key: &mut dyn FnMut(&str) -> Option<String>) -> Option<Vec<Connection>> {
     let text = text.trim_start_matches('\u{feff}');
     if !looks_like(text) {
         return None;
     }
-    Some(to_connections(collect(text)))
+    Some(to_connections(collect(text), import_key))
 }
 
 fn looks_like(text: &str) -> bool {
@@ -228,7 +229,7 @@ fn split_list(value: &str) -> Vec<String> {
     }
 }
 
-fn to_connections(mut raws: Vec<Raw>) -> Vec<Connection> {
+fn to_connections(mut raws: Vec<Raw>, import_key: &mut dyn FnMut(&str) -> Option<String>) -> Vec<Connection> {
     for (i, raw) in raws.iter_mut().enumerate() {
         raw.id = format!("moba-{i}");
     }
@@ -301,7 +302,11 @@ fn to_connections(mut raws: Vec<Raw>) -> Vec<Connection> {
                 } else {
                     AuthType::Key
                 },
-                key_path: raw.key.clone(),
+                key_id: if raw.key.is_empty() {
+                    String::new()
+                } else {
+                    import_key(&raw.key).unwrap_or_default()
+                },
                 init_dir: raw.init_dir.clone(),
                 jump_id: jumps
                     .iter()
@@ -353,7 +358,7 @@ SubRep=生产\\数据库
 ImgNum=41
 nested=#109#0%10.0.0.9%2222%dbuser%%-1%-1%%10.1.0.1__PIPE__10.1.0.2%22__PIPE__2222%a__PIPE__b%#MobaFont#0##-1
 ";
-        let conns = parse(text).unwrap();
+        let conns = parse(text, &mut |path| Some(format!("key:{path}"))).unwrap();
         let names: Vec<_> = conns.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"bastion"));
         assert!(names.contains(&"db"));
@@ -374,13 +379,13 @@ nested=#109#0%10.0.0.9%2222%dbuser%%-1%-1%%10.1.0.1__PIPE__10.1.0.2%22__PIPE__22
         assert_eq!(db_ssh.host, "10.0.0.2");
         assert_eq!(db_ssh.user, "root");
         assert_eq!(db_ssh.auth, AuthType::Key);
-        assert_eq!(db_ssh.key_path, r"C:\keys\id_rsa");
+        assert_eq!(db_ssh.key_id, r"key:C:\keys\id_rsa");
         let bastion = conns.iter().find(|c| c.name == "bastion").unwrap();
         assert_eq!(db.jump_ref(), Some(bastion.id.as_str()));
 
         let files = ssh_of(&conns, "files");
         assert_eq!(files.init_dir, "/var/www");
-        assert_eq!(files.key_path, r"C:\keys\a");
+        assert_eq!(files.key_id, r"key:C:\keys\a");
 
         let nested = conns.iter().find(|c| c.name == "nested").unwrap();
         assert_eq!(nested.group, "生产/数据库");
@@ -400,7 +405,8 @@ nested=#109#0%10.0.0.9%2222%dbuser%%-1%-1%%10.1.0.1__PIPE__10.1.0.2%22__PIPE__22
 
     #[test]
     fn rejects_other_files() {
-        assert!(parse(r#"{"connections":[]}"#).is_none());
-        assert!(parse("just a note").is_none());
+        let mut no_key = |_: &str| None;
+        assert!(parse(r#"{"connections":[]}"#, &mut no_key).is_none());
+        assert!(parse("just a note", &mut no_key).is_none());
     }
 }

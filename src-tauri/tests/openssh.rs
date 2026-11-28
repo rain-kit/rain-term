@@ -14,7 +14,7 @@ use rain_dial::core::rdp::cert::CertStore;
 use rain_dial::core::ssh::known_hosts::HostKeyStore;
 use rain_dial::core::ssh::shell::PtySize;
 use rain_dial::events::NoopSink;
-use rain_dial::model::{AuthType, ConnParams, Connection, SaveConnReq, SshParams};
+use rain_dial::model::{AuthType, ConnParams, Connection, KeyImportReq, SaveConnReq, SshParams};
 use rain_dial::secrets::{MemoryBackend, Secrets};
 use rain_dial::service::conn::ConnService;
 use rain_dial::service::hostkey::HostKeyService;
@@ -426,39 +426,29 @@ async fn key_auth(c: &Containers) {
         ("k_rsa", "s3cret"),
         ("k_pem", ""),
     ];
+    let import = |name: &str, content: String, passphrase: &str| {
+        f.conns.keys().import(KeyImportReq {
+            name: name.into(),
+            content,
+            passphrase: passphrase.into(),
+        })
+    };
+    let key_params = |key_id: String| SshParams {
+        auth: AuthType::Key,
+        key_id,
+        password: String::new(),
+        ..ssh("127.0.0.1", c.target)
+    };
     for (name, passphrase) in cases {
-        let path = f.dir.join(name);
-        std::fs::write(&path, c.sh("target", &format!("cat /tmp/{name}"))).unwrap();
-        let params = SshParams {
-            auth: AuthType::Key,
-            key_path: path.display().to_string(),
-            key_passphrase: passphrase.into(),
-            password: String::new(),
-            ..ssh("127.0.0.1", c.target)
-        };
-        let r = f.test(params).await;
+        let key = import(name, c.sh("target", &format!("cat /tmp/{name}")), passphrase).unwrap();
+        let r = f.test(key_params(key.id)).await;
         assert!(r.is_ok(), "{name} 应能登录：{r:?}");
     }
-    let path = f.dir.join("k_rsa").display().to_string();
-    let bad = SshParams {
-        auth: AuthType::Key,
-        key_path: path,
-        key_passphrase: "bad".into(),
-        ..ssh("127.0.0.1", c.target)
-    };
-    assert_eq!(f.test(bad).await, Err("err.ssh.keyDecryptFailed"));
-    let other = f.dir.join("other");
-    std::fs::write(
-        &other,
-        random_key().to_openssh(LineEnding::LF).unwrap().as_bytes(),
-    )
-    .unwrap();
-    let denied = SshParams {
-        auth: AuthType::Key,
-        key_path: other.display().to_string(),
-        ..ssh("127.0.0.1", c.target)
-    };
-    assert_eq!(f.test(denied).await, Err("err.ssh.authDenied"));
+    let bad = import("bad", c.sh("target", "cat /tmp/k_rsa"), "bad").unwrap_err();
+    assert_eq!(bad.msg.i18n, "err.ssh.keyDecryptFailed");
+    let other = random_key().to_openssh(LineEnding::LF).unwrap().to_string();
+    let other = import("other", other, "").unwrap();
+    assert_eq!(f.test(key_params(other.id)).await, Err("err.ssh.authDenied"));
 }
 
 async fn agent_auth(c: &Containers) {

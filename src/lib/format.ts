@@ -88,5 +88,15 @@ export function formatTime(secs: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 密钥类型：ssh-ed25519 → ED25519，ssh-rsa → RSA 4096，ecdsa-sha2-nistp256 → ECDSA P-256。 */
+export function keyTypeLabel(k: { algorithm: string; bits?: number }): string {
+  const a = k.algorithm;
+  if (a === "ssh-ed25519") return "ED25519";
+  if (a === "ssh-rsa" || a.startsWith("rsa-")) return k.bits ? `RSA ${k.bits}` : "RSA";
+  if (a === "ssh-dss") return "DSA";
+  const curve = /^ecdsa-sha2-nistp(\d+)$/.exec(a)?.[1];
+  return curve ? `ECDSA P-${curve}` : a;
+}
+
 /** 跳板机的连接 ID。 */
 export const jumpRef = (c: Connection): string | undefined => c.jumpId || undefined;
