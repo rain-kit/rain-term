@@ -88,14 +88,5 @@ export function formatTime(secs: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 日志时间（RFC 3339）→ 本地时间 11-27 09:05:01.123；解析不了时原样返回。 */
-export function formatLogTime(time: string): string {
-  // 后端写的是纳秒精度，WebKit 只认三位小数。
-  const d = new Date(time.replace(/(\.\d{3})\d+/, "$1"));
-  if (Number.isNaN(d.getTime())) return time;
-  const ms = String(d.getMilliseconds()).padStart(3, "0");
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}`;
-}
-
 /** 跳板机的连接 ID。 */
 export const jumpRef = (c: Connection): string | undefined => c.jumpId || undefined;

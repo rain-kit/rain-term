@@ -8,8 +8,7 @@ use crate::config::AppConfig;
 use crate::core::rdp::cert::CertStore;
 use crate::core::ssh::known_hosts::HostKeyStore;
 use crate::events::{self, EventSink};
-use crate::logging::LevelHandle;
-use crate::secrets::{KeyringBackend, Secrets};
+use crate::secrets::{FileBackend, Secrets};
 use crate::service::conn::ConnService;
 use crate::service::hostkey::HostKeyService;
 use crate::service::monitor::MonitorService;
@@ -25,7 +24,6 @@ use crate::{tray, window};
 pub struct AppState {
     pub data_dir: PathBuf,
     pub config: Mutex<AppConfig>,
-    pub level: LevelHandle,
     pub conns: Arc<ConnService>,
     pub host_keys: Arc<HostKeyService>,
     pub pool: Arc<ClientPool>,
@@ -38,10 +36,6 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn log_dir(&self) -> PathBuf {
-        self.data_dir.join("logs")
-    }
-
     /// 关闭全部终端会话、SFTP 面板、远程桌面、服务器监控和 SSH 连接。
     pub fn close_all(&self) {
         self.sessions.close_all();
@@ -73,7 +67,6 @@ pub fn setup(
     app: &mut App,
     data_dir: PathBuf,
     cfg: AppConfig,
-    level: LevelHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
     let sink: Arc<dyn EventSink> = Arc::new(TauriSink(handle.clone()));
@@ -87,7 +80,7 @@ pub fn setup(
     );
     let conns = Arc::new(ConnService::new(
         ConnStore::new(data_dir.join("connections.json")),
-        Secrets::new(Box::new(KeyringBackend)),
+        Secrets::new(Box::new(FileBackend::open(&data_dir)?)),
         host_keys.clone(),
         sink,
     ));
@@ -101,7 +94,6 @@ pub fn setup(
     app.manage(AppState {
         data_dir,
         config: Mutex::new(cfg),
-        level,
         conns,
         host_keys,
         pool,

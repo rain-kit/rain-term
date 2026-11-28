@@ -1,14 +1,22 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::config::KEYRING_PREFIX;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as B64;
+use ring::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
+use ring::rand::{SecureRandom, SystemRandom};
+use serde::{Deserialize, Serialize};
+use tracing::{error, warn};
+
 use crate::model::Connection;
+use crate::util::write_file_atomic;
 
 pub const PASSWORD: &str = "password";
 pub const KEY_PASSPHRASE: &str = "keyPassphrase";
 pub const KINDS: [&str; 2] = [PASSWORD, KEY_PASSPHRASE];
 
-/// 密码存储后端：正式运行用系统凭据库，测试用内存实现。
+/// 密码存储后端：正式运行用加密文件，测试用内存实现。
 pub trait SecretBackend: Send + Sync {
     /// 不存在时返回空字符串。
     fn get(&self, conn_id: &str, kind: &str) -> Result<String, String>;
@@ -67,45 +75,216 @@ impl Secrets {
     }
 }
 
-/// 系统凭据库（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service）。
-/// 服务名 "rain-dial:<连接ID>"，账户名为密码类型；Windows 上凭据名为 "服务名:账户名"，内容为 UTF-8。
-pub struct KeyringBackend;
+const SECRETS_FILE: &str = "secrets.json";
+const KEY_FILE: &str = "secret.key";
+const KEY_LEN: usize = 32;
+const FILE_VERSION: u32 = 1;
 
-impl KeyringBackend {
-    fn entry(conn_id: &str, kind: &str) -> keyring::Result<keyring::Entry> {
-        let service = format!("{KEYRING_PREFIX}:{conn_id}");
-        if cfg!(windows) {
-            keyring::Entry::new_with_target(&format!("{service}:{kind}"), &service, kind)
+/// 加密文件：密码保存在数据目录的 secrets.json，用同目录 secret.key 里的随机密钥做 AES-256-GCM 加密。
+/// 密钥和密码放在一起，只是不让人直接看到明文，能读取数据目录的人都能解出密码。
+pub struct FileBackend {
+    path: PathBuf,
+    key_path: PathBuf,
+    key: LessSafeKey,
+    state: Mutex<FileState>,
+}
+
+struct FileState {
+    data: SecretData,
+    /// 新生成、还没写进 secret.key 的密钥，第一次保存时写入。
+    unsaved_key: Option<[u8; KEY_LEN]>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretData {
+    /// 连接 ID → 密码类型 → 密码。
+    #[serde(default)]
+    secrets: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Envelope {
+    version: u32,
+    nonce: String,
+    data: String,
+}
+
+impl FileBackend {
+    /// 读取数据目录下的密码文件。密钥或密码文件损坏时改名留在原处并从空白开始，不影响启动。
+    pub fn open(dir: &Path) -> Result<Self, String> {
+        let path = dir.join(SECRETS_FILE);
+        let key_path = dir.join(KEY_FILE);
+        let stored = read_key(&key_path).unwrap_or_else(|e| {
+            error!(err = %e, "密钥文件无效");
+            move_aside(&key_path);
+            None
+        });
+        let (key_bytes, unsaved_key) = match stored {
+            Some(k) => (k, None),
+            None => {
+                let k = random::<KEY_LEN>()?;
+                (k, Some(k))
+            }
+        };
+        let key = LessSafeKey::new(
+            UnboundKey::new(&AES_256_GCM, &key_bytes).map_err(|_| "密钥长度错误".to_string())?,
+        );
+        let data = if unsaved_key.is_some() {
+            if path.exists() {
+                error!("找不到密钥，无法解开已保存的密码");
+                move_aside(&path);
+            }
+            SecretData::default()
         } else {
-            keyring::Entry::new(&service, kind)
+            read_data(&path, &key).unwrap_or_else(|e| {
+                error!(err = %e, "读取密码文件失败");
+                move_aside(&path);
+                SecretData::default()
+            })
+        };
+        Ok(FileBackend {
+            path,
+            key_path,
+            key,
+            state: Mutex::new(FileState { data, unsaved_key }),
+        })
+    }
+
+    /// 修改一份副本并写入文件，写入成功后才替换内存里的数据。
+    fn update(&self, f: impl FnOnce(&mut SecretData)) -> Result<(), String> {
+        let mut st = self.state.lock().unwrap();
+        let mut next = st.data.clone();
+        f(&mut next);
+        if let Some(k) = st.unsaved_key {
+            write_file_atomic(&self.key_path, B64.encode(k).as_bytes())
+                .map_err(|e| format!("写入 {} 失败: {e}", self.key_path.display()))?;
+            st.unsaved_key = None;
         }
+        let plain = serde_json::to_vec(&next).map_err(|e| e.to_string())?;
+        let env = seal(&self.key, plain)?;
+        let text = serde_json::to_vec_pretty(&env).map_err(|e| e.to_string())?;
+        write_file_atomic(&self.path, &text)
+            .map_err(|e| format!("写入 {} 失败: {e}", self.path.display()))?;
+        st.data = next;
+        Ok(())
     }
 }
 
-impl SecretBackend for KeyringBackend {
+impl SecretBackend for FileBackend {
     fn get(&self, conn_id: &str, kind: &str) -> Result<String, String> {
-        let entry = Self::entry(conn_id, kind).map_err(|e| e.to_string())?;
-        match entry.get_secret() {
-            Ok(bytes) => Ok(String::from_utf8(bytes)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())),
-            Err(keyring::Error::NoEntry) => Ok(String::new()),
-            Err(e) => Err(e.to_string()),
-        }
+        let st = self.state.lock().unwrap();
+        Ok(st
+            .data
+            .secrets
+            .get(conn_id)
+            .and_then(|m| m.get(kind))
+            .cloned()
+            .unwrap_or_default())
     }
 
     fn set(&self, conn_id: &str, kind: &str, value: &str) -> Result<(), String> {
-        let entry = Self::entry(conn_id, kind).map_err(|e| e.to_string())?;
-        entry
-            .set_secret(value.as_bytes())
-            .map_err(|e| e.to_string())
+        self.update(|d| {
+            d.secrets
+                .entry(conn_id.to_string())
+                .or_default()
+                .insert(kind.to_string(), value.to_string());
+        })
     }
 
     fn delete(&self, conn_id: &str, kind: &str) -> Result<(), String> {
-        let entry = Self::entry(conn_id, kind).map_err(|e| e.to_string())?;
-        match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.to_string()),
+        let exists = {
+            let st = self.state.lock().unwrap();
+            st.data
+                .secrets
+                .get(conn_id)
+                .is_some_and(|m| m.contains_key(kind))
+        };
+        if !exists {
+            return Ok(());
         }
+        self.update(|d| {
+            if let Some(m) = d.secrets.get_mut(conn_id) {
+                m.remove(kind);
+                if m.is_empty() {
+                    d.secrets.remove(conn_id);
+                }
+            }
+        })
+    }
+}
+
+fn random<const N: usize>() -> Result<[u8; N], String> {
+    let mut buf = [0u8; N];
+    SystemRandom::new()
+        .fill(&mut buf)
+        .map_err(|_| "生成随机数失败".to_string())?;
+    Ok(buf)
+}
+
+/// 文件不存在时返回 None。
+fn read_key(path: &Path) -> Result<Option<[u8; KEY_LEN]>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("读取 {} 失败: {e}", path.display())),
+    };
+    let bytes = B64.decode(text.trim()).map_err(|e| e.to_string())?;
+    let key: [u8; KEY_LEN] = bytes
+        .try_into()
+        .map_err(|_| format!("{} 长度不对", path.display()))?;
+    Ok(Some(key))
+}
+
+fn read_data(path: &Path, key: &LessSafeKey) -> Result<SecretData, String> {
+    let text = match std::fs::read(path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SecretData::default()),
+        Err(e) => return Err(format!("读取 {} 失败: {e}", path.display())),
+    };
+    let env: Envelope = serde_json::from_slice(&text).map_err(|e| e.to_string())?;
+    if env.version != FILE_VERSION {
+        return Err(format!("不支持的密码文件版本 {}", env.version));
+    }
+    let plain = open_sealed(key, &env)?;
+    serde_json::from_slice(&plain).map_err(|e| e.to_string())
+}
+
+fn seal(key: &LessSafeKey, mut buf: Vec<u8>) -> Result<Envelope, String> {
+    let nonce = random::<NONCE_LEN>()?;
+    key.seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce), Aad::empty(), &mut buf)
+        .map_err(|_| "加密失败".to_string())?;
+    Ok(Envelope {
+        version: FILE_VERSION,
+        nonce: B64.encode(nonce),
+        data: B64.encode(buf),
+    })
+}
+
+fn open_sealed(key: &LessSafeKey, env: &Envelope) -> Result<Vec<u8>, String> {
+    let nonce: [u8; NONCE_LEN] = B64
+        .decode(&env.nonce)
+        .map_err(|e| e.to_string())?
+        .try_into()
+        .map_err(|_| "nonce 长度不对".to_string())?;
+    let mut buf = B64.decode(&env.data).map_err(|e| e.to_string())?;
+    let plain = key
+        .open_in_place(Nonce::assume_unique_for_key(nonce), Aad::empty(), &mut buf)
+        .map_err(|_| "解密失败，密钥和密码文件对不上".to_string())?;
+    Ok(plain.to_vec())
+}
+
+/// 把无法使用的文件改名为 "原名.broken-时间"，留给用户自己处理。
+fn move_aside(path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let stamp = chrono::Local::now().format("%Y%m%d%H%M%S");
+    let target = path.with_file_name(format!("{name}.broken-{stamp}"));
+    match std::fs::rename(path, &target) {
+        Ok(()) => warn!(file = %target.display(), "无法使用的文件已改名保留"),
+        Err(e) => error!(file = %path.display(), err = %e, "改名失败"),
     }
 }
 
@@ -144,6 +323,10 @@ impl SecretBackend for MemoryBackend {
 mod tests {
     use super::*;
 
+    fn temp_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("rd-secrets-{}", crate::util::new_id()))
+    }
+
     #[test]
     fn set_empty_deletes() {
         let s = Secrets::new(Box::new(MemoryBackend::default()));
@@ -163,5 +346,50 @@ mod tests {
         assert!(!s.has("c1", PASSWORD));
         assert!(!s.has("c1", KEY_PASSPHRASE));
         assert_eq!(s.get("c2", PASSWORD).unwrap(), "c");
+    }
+
+    #[test]
+    fn file_backend_persists_encrypted() {
+        let dir = temp_dir();
+        let b = FileBackend::open(&dir).unwrap();
+        assert!(!dir.join(KEY_FILE).exists(), "没有保存过密码时不写文件");
+        b.set("c1", PASSWORD, "s3cret-pw").unwrap();
+        b.set("c1", KEY_PASSPHRASE, "phrase").unwrap();
+        b.set("c2", PASSWORD, "other").unwrap();
+        b.delete("c2", PASSWORD).unwrap();
+
+        let raw = std::fs::read_to_string(dir.join(SECRETS_FILE)).unwrap();
+        assert!(!raw.contains("s3cret-pw"), "文件里没有明文");
+
+        let b = FileBackend::open(&dir).unwrap();
+        assert_eq!(b.get("c1", PASSWORD).unwrap(), "s3cret-pw");
+        assert_eq!(b.get("c1", KEY_PASSPHRASE).unwrap(), "phrase");
+        assert_eq!(b.get("c2", PASSWORD).unwrap(), "");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn wrong_key_moves_file_aside() {
+        let dir = temp_dir();
+        FileBackend::open(&dir)
+            .unwrap()
+            .set("c1", PASSWORD, "pw")
+            .unwrap();
+        std::fs::write(dir.join(KEY_FILE), B64.encode([7u8; KEY_LEN])).unwrap();
+
+        let b = FileBackend::open(&dir).unwrap();
+        assert_eq!(b.get("c1", PASSWORD).unwrap(), "");
+        assert!(!dir.join(SECRETS_FILE).exists());
+        let kept = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with("secrets.json.broken-"));
+        assert!(kept, "解不开的文件改名保留");
+        b.set("c1", PASSWORD, "new").unwrap();
+        assert_eq!(
+            FileBackend::open(&dir).unwrap().get("c1", PASSWORD).unwrap(),
+            "new"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

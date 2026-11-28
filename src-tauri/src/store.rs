@@ -29,7 +29,7 @@ fn file_version() -> u32 {
     1
 }
 
-/// 把连接列表保存在数据目录下的 connections.json，列表顺序即界面上的排序；密码类字段不落盘。
+/// 把连接列表保存在数据目录下的 connections.json，列表顺序即界面上的排序；密码类字段不写进这个文件。
 pub struct ConnStore {
     path: PathBuf,
     lock: Mutex<()>,

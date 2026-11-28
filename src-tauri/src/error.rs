@@ -74,11 +74,9 @@ impl From<crate::core::rdp::RdpError> for ApiError {
 // -------------------- 系统 -------------------- //
 pub const SERVICE_ERROR: Code = Code(1, "err.service", "系统异常");
 pub const PARAM_INVALID: Code = Code(2, "err.paramInvalid", "请求参数错误");
-pub const OPEN_DIR_FAILED: Code = Code(3, "err.openDirFailed", "打开目录失败");
 pub const OPEN_URL_FAILED: Code = Code(4, "err.openUrlFailed", "打开链接失败");
-pub const SECRET_STORE_FAILED: Code = Code(5, "err.secretStoreFailed", "保存密码到系统凭据库失败");
-pub const SECRET_READ_FAILED: Code = Code(6, "err.secretReadFailed", "读取系统凭据库失败");
-pub const LOG_READ_FAILED: Code = Code(7, "err.logReadFailed", "读取日志失败");
+pub const SECRET_STORE_FAILED: Code = Code(5, "err.secretStoreFailed", "保存密码失败");
+pub const SECRET_READ_FAILED: Code = Code(6, "err.secretReadFailed", "读取已保存的密码失败");
 pub const OS_AUTH_FAILED: Code = Code(8, "err.osAuthFailed", "验证电脑密码失败");
 
 // -------------------- 连接 100000 -------------------- //

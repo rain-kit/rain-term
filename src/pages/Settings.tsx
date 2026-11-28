@@ -1,13 +1,11 @@
-import { ArrowLeft, ArrowUpCircle, FolderOpen, Monitor, Moon, RefreshCw, ScrollText, Sun } from "lucide-react";
+import { ArrowLeft, ArrowUpCircle, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import LogViewer from "../components/LogViewer";
 import PageHeader from "../components/PageHeader";
 import UpdateRouteMenu from "../components/UpdateRouteMenu";
 import { Button, Card, Input, Segmented, Select } from "../components/ui";
-import { settingsApi } from "../lib/api";
 import { useI18n, type Language } from "../lib/i18n";
 import { useSettings, useToast, useUpdate } from "../lib/store";
-import type { ColorScheme, CursorStyle, LogLevel, SettingsInput, TerminalSettings, ThemeMode } from "../lib/types";
+import type { ColorScheme, CursorStyle, SettingsInput, TerminalSettings, ThemeMode } from "../lib/types";
 
 const FONT_SIZES = Array.from({ length: 25 }, (_, i) => i + 8);
 const SCROLLBACKS = [1000, 5000, 10000, 20000, 50000, 100000];
@@ -66,7 +64,6 @@ export default function Settings({ onBack }: { onBack: () => void }) {
   const toast = useToast();
   const { info: updateInfo, checking, check, setDialogOpen } = useUpdate();
   const newVersion = updateInfo?.hasUpdate ? updateInfo.latest : undefined;
-  const [logOpen, setLogOpen] = useState(false);
   const header = (
     <PageHeader
       title={t("nav.settings")}
@@ -158,41 +155,6 @@ export default function Settings({ onBack }: { onBack: () => void }) {
             </Row>
           </Group>
 
-          <Group title={t("settings.logs")}>
-            <Row title={t("settings.logLevel")} desc={t("settings.logLevelDesc")}>
-              <Select<LogLevel>
-                className="w-32"
-                value={s.logLevel}
-                onChange={(logLevel) => update({ logLevel })}
-                options={[
-                  { value: "debug", label: "Debug" },
-                  { value: "info", label: "Info" },
-                  { value: "warn", label: "Warn" },
-                  { value: "error", label: "Error" },
-                ]}
-              />
-            </Row>
-            <Row title={t("settings.logDir")} desc={<span className="font-mono">{s.logDir}</span>}>
-              <div className="flex shrink-0 gap-2">
-                <Button size="sm" icon={<ScrollText size={13} />} onClick={() => setLogOpen(true)}>
-                  {t("settings.viewLog")}
-                </Button>
-                <Button size="sm" icon={<FolderOpen size={13} />} onClick={() => settingsApi.openLogDir().catch(toast.error)}>
-                  {t("common.open")}
-                </Button>
-              </div>
-            </Row>
-          </Group>
-
-          <Group title={t("settings.data")}>
-            <Row title={t("settings.dataDir")} desc={<span className="font-mono">{s.dataDir}</span>}>
-              <Button size="sm" icon={<FolderOpen size={13} />} onClick={() => settingsApi.openDataDir().catch(toast.error)}>
-                {t("common.open")}
-              </Button>
-            </Row>
-            <div className="text-xs leading-relaxed text-muted">{t("settings.dataNote")}</div>
-          </Group>
-
           <Group title={t("settings.about")}>
             <Row title="Rain Term" desc={newVersion ? t("update.found", { version: newVersion }) : t("settings.aboutDesc")}>
               <div className="flex items-center gap-3">
@@ -223,7 +185,6 @@ export default function Settings({ onBack }: { onBack: () => void }) {
           </Group>
         </div>
       </div>
-      <LogViewer open={logOpen} onClose={() => setLogOpen(false)} />
     </>
   );
 }

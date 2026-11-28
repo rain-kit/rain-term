@@ -7,7 +7,6 @@ import type {
   FilePreview,
   HostKeyPrompt,
   I18nMsg,
-  LogEntry,
   MonitorEvent,
   RdpInput,
   RdpNotice,
@@ -50,10 +49,6 @@ export function errorMessage(e: unknown): string {
 export const settingsApi = {
   get: () => invoke<Settings>("settings_get"),
   save: (input: SettingsInput) => invoke<Settings>("settings_save", { input }),
-  openDataDir: () => invoke<void>("open_data_dir"),
-  openLogDir: () => invoke<void>("open_log_dir"),
-  /** 最近的 limit 条日志，按时间先后排列。 */
-  logTail: (limit: number) => invoke<LogEntry[]>("log_tail", { limit }),
   /** 用系统浏览器打开 http / https 链接。 */
   openUrl: (url: string) => invoke<void>("open_url", { url }),
 };

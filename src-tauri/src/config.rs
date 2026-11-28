@@ -8,8 +8,6 @@ use crate::util::write_file_atomic;
 
 pub const APP_NAME: &str = "Rain Term";
 pub const DATA_DIR_NAME: &str = "rain-dial";
-/// 系统凭据库条目的服务名前缀，完整服务名为 "rain-dial:<连接ID>"。改动会导致已保存的密码无法读取。
-pub const KEYRING_PREFIX: &str = "rain-dial";
 /// 设置后用它作为数据目录（便携模式、测试用）。
 pub const DATA_DIR_ENV: &str = "RAIN_DIAL_DATA_DIR";
 

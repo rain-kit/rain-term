@@ -36,8 +36,8 @@ ironrdp-svc = "0.10.0"
 ironrdp-tls = { version = "0.3.0", features = ["native-tls"] }
 ironrdp-tokio = "0.12.0"
 md-5 = "0.10.6"
-keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls", "system-proxy", "socks"] }
+ring = "0.17.14"
 russh = { version = "0.65.1", default-features = false, features = ["ring", "rsa", "flate2"] }
 russh-sftp = "3"
 serde = { version = "1.0.229", features = ["derive"] }

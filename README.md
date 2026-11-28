@@ -56,35 +56,15 @@ When you run a newer Windows installer over an existing installation, it recomme
   - Upload and download files and whole folders, or drag files in from your system. Transfers are queued with progress and speed, can be cancelled at any time, and incomplete files are removed. Uploading over an existing file or folder asks for confirmation first.
 - **Flexible authentication**: password, private key (with passphrase), or the system SSH agent.
 - **Safe by default**
-  - Server fingerprints are verified on first connection and saved to `known_hosts`. Connections are refused if the fingerprint changes.
-  - Passwords are stored in the system credential store (Windows Credential Manager / macOS Keychain / Linux Secret Service), never in config files or exported files.
+  - Server fingerprints are verified on first connection and saved. Connections are refused if the fingerprint changes. Fingerprints in `~/.ssh/known_hosts` are trusted as well.
+  - Passwords are stored encrypted on your device, separate from connection configs, and never in exported files.
   - Mark a connection as production: it is shown in red, and pasting anything into its terminal asks for confirmation. Pasting multi-line text into any terminal asks too.
 - **Personalization**: terminal font, size, color schemes (One Dark, Dracula, Nord, Solarized and more), cursor style and scrollback; light / dark / system theme; English, Simplified Chinese and Traditional Chinese.
-- **More**: system tray with recent connections, built-in log viewer, in-app updates.
-
-## Data
-
-All data stays on your own device. The data folder is:
-
-- Windows: `%AppData%\rain-dial`
-- macOS: `~/Library/Application Support/rain-dial`
-- Linux: `~/.config/rain-dial`
-
-| File | Contents |
-| :--- | :------- |
-| `connections.json` | Connections (no passwords) |
-| `config.yaml` | App settings |
-| `known_hosts` | Trusted server fingerprints |
-| `workspace.json` | Tabs open in the last session |
-| `logs/` | Log files |
-
-Fingerprints in `~/.ssh/known_hosts` are trusted as well.
-
-Set the `RAIN_DIAL_DATA_DIR` environment variable to use a different data folder, e.g. for portable use or testing.
+- **More**: system tray with recent connections, in-app updates.
 
 ## Privacy
 
-Rain Term has no telemetry and does not collect personal data. It only makes these network connections:
+Rain Term has no telemetry and does not collect personal data. All data stays on your own device. It only makes these network connections:
 
 - To the SSH servers (and jump hosts) you connect to.
 - To GitHub, to check for updates: the app requests the latest release information from `api.github.com` after launch and every 6 hours. The request carries only the app version. When you choose to update, the installer is downloaded from GitHub Releases. GitHub sees your IP address as with any web request; see the [GitHub Privacy Statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).

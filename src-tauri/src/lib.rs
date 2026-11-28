@@ -27,7 +27,7 @@ pub fn run() {
         Err(e) => (config::AppConfig::default(), Some(e)),
     };
     i18n::set(&cfg.ui.language);
-    let level = logging::init(&data_dir.join("logs"), &cfg.system.log_level);
+    logging::init(&data_dir.join("logs"), &cfg.system.log_level);
     if let Some(e) = cfg_err {
         warn!(err = %e, "读取配置失败，使用默认配置");
     }
@@ -89,9 +89,6 @@ pub fn run() {
             commands::sftp::pick_download_dir,
             commands::settings::settings_get,
             commands::settings::settings_save,
-            commands::settings::open_data_dir,
-            commands::settings::open_log_dir,
-            commands::settings::log_tail,
             commands::settings::open_url,
             commands::workspace::workspace_get,
             commands::workspace::workspace_save_tabs,
@@ -102,7 +99,7 @@ pub fn run() {
             commands::update::update_install,
             commands::update::open_release_page,
         ])
-        .setup(move |app| app::setup(app, data_dir, cfg, level))
+        .setup(move |app| app::setup(app, data_dir, cfg))
         .build(tauri::generate_context!())
         .expect("启动失败")
         .run(app::on_run_event);

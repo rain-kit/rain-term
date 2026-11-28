@@ -338,7 +338,7 @@ impl ConnService {
         self.import(text)
     }
 
-    /// 导入 FinalShell 的数据目录、`conn` 目录或其中某一层文件夹；FinalShell 的密码会解密后写入凭据库。
+    /// 导入 FinalShell 的数据目录、`conn` 目录或其中某一层文件夹；FinalShell 的密码会解密后保存。
     /// 选中单个 `*_connect_config.json` 时只导入这一台，并向上查找分组名和私钥。
     pub fn import_finalshell(&self, path: &Path) -> ApiResult<usize> {
         let keys_dir = self.store.dir();
@@ -666,7 +666,7 @@ mod tests {
         assert_eq!(
             f.svc.resolve(&v.conn.id).unwrap().params,
             ssh("x", "").params,
-            "密码保存在凭据库，读取时填回"
+            "密码单独保存，读取时填回"
         );
         assert_eq!(
             f.events.0.lock().unwrap().as_slice(),

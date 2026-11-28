@@ -56,35 +56,15 @@ Linux 上用 `sudo apt install ./<文件名>.deb` 或 `sudo dnf install ./<文�
   - 上传、下载文件和整个文件夹，可从系统拖入文件上传。传输任务排队执行，显示进度和速度，可随时取消，取消或失败时删除没传完的文件。目标位置已有同名文件或文件夹时先确认是否覆盖。
 - **多种认证方式**：密码、私钥（支持带密码的私钥）和系统 ssh-agent。
 - **默认安全**
-  - 首次连接时确认服务器指纹并保存到 `known_hosts`，指纹变化时拒绝连接。
-  - 密码保存在系统凭据库（Windows 凭据管理器 / macOS 钥匙串 / Linux Secret Service），不写入配置文件，导出的文件也不含密码。
+  - 首次连接时确认服务器指纹并保存，指纹变化时拒绝连接；`~/.ssh/known_hosts` 里的指纹同样会被信任。
+  - 密码加密保存在本机，不和连接配置放在一起，导出的文件也不含密码。
   - 连接可以标记为“生产环境”：显示为红色，往它的终端粘贴任何内容前都要确认。往任何终端粘贴多行文本前也会确认。
 - **个性化**：终端字体、字号、配色方案（内置 One Dark、Dracula、Nord、Solarized 等）、光标样式和回滚行数；浅色、深色、跟随系统三种主题；简体中文、繁體中文和 English。
-- **其他**：托盘菜单列出最近的连接，内置日志查看器，支持应用内更新。
-
-## 数据
-
-所有数据都保存在你自己的设备上，数据目录为：
-
-- Windows：`%AppData%\rain-dial`
-- macOS：`~/Library/Application Support/rain-dial`
-- Linux：`~/.config/rain-dial`
-
-| 文件 | 内容 |
-| :--- | :--- |
-| `connections.json` | 连接配置（不含密码） |
-| `config.yaml` | 应用设置 |
-| `known_hosts` | 已信任的服务器指纹 |
-| `workspace.json` | 上次打开的标签 |
-| `logs/` | 日志文件 |
-
-`~/.ssh/known_hosts` 里的指纹同样会被信任。
-
-设置环境变量 `RAIN_DIAL_DATA_DIR` 可以改用其他数据目录，例如便携使用或测试。
+- **其他**：托盘菜单列出最近的连接，支持应用内更新。
 
 ## 隐私
 
-Rain Term 没有遥测，不收集任何个人数据。它只会发起以下网络连接：
+Rain Term 没有遥测，不收集任何个人数据，所有数据都保存在你自己的设备上。它只会发起以下网络连接：
 
 - 连接你配置的 SSH 服务器（以及跳板机）。
 - 访问 GitHub 检查更新：启动后以及之后每 6 小时，应用会向 `api.github.com` 请求最新版本信息，请求中只包含应用版本号。选择更新时，会从 GitHub Releases 下载安装包。和任何网页请求一样，GitHub 能看到你的 IP 地址，详见 [GitHub 隐私声明](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement)。

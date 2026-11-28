@@ -161,7 +161,7 @@ impl Default for ConnParams {
 }
 
 /// 一个连接的持久化定义，保存在 connections.json。
-/// 密码类字段不写入文件，由 secrets 存进系统凭据库。
+/// 密码类字段不写入 connections.json，由 secrets 加密存进 secrets.json。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Connection {

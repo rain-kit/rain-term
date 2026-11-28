@@ -8,7 +8,6 @@ export interface I18nMsg {
   params?: Record<string, string | I18nMsg>;
 }
 
-export type LogLevel = "debug" | "info" | "warn" | "error";
 export type ThemeMode = "system" | "light" | "dark";
 
 export type ColorScheme = "auto" | "oneDark" | "dracula" | "nord" | "solarizedDark" | "solarizedLight";
@@ -39,31 +38,17 @@ export interface ToolsSettings {
 }
 
 export interface Settings {
-  logLevel: LogLevel;
   theme: ThemeMode;
   language: Language;
   /** 后端识别的系统语言，系统语言不受支持时为 en。 */
   systemLanguage: Locale;
   terminal: TerminalSettings;
   tools: ToolsSettings;
-  dataDir: string;
-  logDir: string;
   version: string;
 }
 
-/** 日志文件里的一条记录，见 src-tauri/src/logging.rs。不是 JSON 的行只有 message。 */
-export interface LogEntry {
-  /** RFC 3339，带时区。 */
-  time: string;
-  /** DEBUG、INFO、WARN、ERROR。 */
-  level: string;
-  target: string;
-  message: string;
-  fields: [string, string][];
-}
-
 /** terminal 不传时保持不变。 */
-export type SettingsInput = Pick<Settings, "logLevel" | "theme" | "language"> & { terminal?: TerminalSettings; tools?: ToolsSettings };
+export type SettingsInput = Pick<Settings, "theme" | "language"> & { terminal?: TerminalSettings; tools?: ToolsSettings };
 
 /** 见 src-tauri/src/update.rs。 */
 export interface UpdateInfo {
