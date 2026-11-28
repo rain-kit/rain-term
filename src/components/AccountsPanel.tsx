@@ -1,11 +1,11 @@
-import { FileUp, KeyRound, Loader2, Lock, Pencil, Sparkles, Trash2, UserPlus, UserRound } from "lucide-react";
+import { FileUp, KeyRound, Loader2, Lock, Pencil, Trash2, UserPlus, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { accountApi } from "../lib/api";
 import { formatTime, KIND_LABEL, keyTypeLabel } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useAccounts, useConns, useKeys, useToast } from "../lib/store";
 import type { AccountAuth, AccountScope, AccountView, ConnKind, ConnView, SshKey } from "../lib/types";
-import KeyImportDialog, { KeyGenerateDialog } from "./KeyImportDialog";
+import KeyImportDialog from "./KeyImportDialog";
 import KindIcon from "./KindIcon";
 import { Button, Card, Confirm, ContextMenu, cx, Dialog, Empty, Field, IconButton, Input, PasswordInput, Segmented, Select, type SelectOption } from "./ui";
 
@@ -64,7 +64,6 @@ export function AccountEditor({
   const [errors, setErrors] = useState<Errors>({});
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -205,9 +204,6 @@ export function AccountEditor({
               <Button type="button" title={t("keys.importTitle")} icon={<FileUp size={14} />} onClick={() => setImporting(true)}>
                 {t("keys.import")}
               </Button>
-              <Button type="button" title={t("keys.generateTitle")} icon={<Sparkles size={14} />} onClick={() => setGenerating(true)}>
-                {t("keys.generate")}
-              </Button>
             </div>
           </Field>
         )}
@@ -233,7 +229,6 @@ export function AccountEditor({
         </Field>
       </div>
       <KeyImportDialog open={importing} onClose={() => setImporting(false)} onDone={(k: SshKey) => set("keyId", k.id)} />
-      <KeyGenerateDialog open={generating} onClose={() => setGenerating(false)} onDone={(k: SshKey) => set("keyId", k.id)} />
     </Dialog>
   );
 }

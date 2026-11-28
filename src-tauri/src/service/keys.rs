@@ -1,4 +1,4 @@
-//! 密钥管理：私钥导入或生成后保存在程序的数据目录，连接按 ID 引用，不再直接读取私钥文件。
+//! 密钥管理：私钥导入后保存在程序的数据目录，连接按 ID 引用，不再直接读取私钥文件。
 //! 列表保存在 keys.json；私钥内容和私钥密码加密存进 secrets.json。
 
 use std::path::PathBuf;
@@ -8,15 +8,14 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
-use crate::core::ssh::keyfile::{self, KeyKind, MAX_KEY_SIZE, RSA_BITS};
+use crate::core::ssh::keyfile::{self, MAX_KEY_SIZE};
 use crate::error::{self, ApiResult};
 use crate::events::{self, EventSink};
-use crate::model::{KeyGenerateReq, KeyImportReq, KeyType, SshKey};
+use crate::model::{KeyImportReq, SshKey};
 use crate::secrets::{self, Secrets};
 use crate::util::{new_id, write_file_atomic};
 
 const FILE_VERSION: u32 = 1;
-const DEFAULT_RSA_BITS: u32 = 4096;
 
 #[derive(Serialize, Deserialize)]
 struct KeyFile {
@@ -143,7 +142,6 @@ impl KeyService {
                 algorithm: info.algorithm,
                 bits: info.bits,
                 fingerprint: info.fingerprint,
-                public_key: info.public_key,
                 encrypted,
                 created_at: Some(Local::now()),
             };
@@ -160,25 +158,6 @@ impl KeyService {
             Err(_) => self.drop_secrets(&id),
         }
         r
-    }
-
-    /// 生成新的密钥并保存。RSA 要几秒钟，调用方应放到阻塞线程里执行。
-    pub fn generate(&self, req: KeyGenerateReq) -> ApiResult<SshKey> {
-        let kind = match req.key_type {
-            KeyType::Ed25519 => KeyKind::Ed25519,
-            KeyType::Ecdsa => KeyKind::Ecdsa,
-            KeyType::Rsa => {
-                let bits = req.bits.unwrap_or(DEFAULT_RSA_BITS);
-                if !RSA_BITS.contains(&bits) {
-                    return Err(error::PARAM_INVALID.err());
-                }
-                KeyKind::Rsa(bits)
-            }
-        };
-        let name = req.name.trim();
-        let text = keyfile::generate(kind, name, &req.passphrase)
-            .map_err(|e| error::KEY_GENERATE_FAILED.cause(e))?;
-        self.add(name, &text, &req.passphrase).map(|(k, _)| k)
     }
 
     pub fn rename(&self, id: &str, name: &str) -> ApiResult<SshKey> {
@@ -213,13 +192,6 @@ impl KeyService {
         Ok(())
     }
 
-    /// 导出用的私钥原文：导入时是什么格式就是什么格式，设置了密码的仍是加密的。
-    pub fn export(&self, id: &str) -> ApiResult<(SshKey, String)> {
-        let key = self.get(id)?;
-        let (text, _) = self.material(id)?;
-        Ok((key, text))
-    }
-
     fn store_secrets(&self, id: &str, text: &str, passphrase: &str) -> ApiResult<()> {
         for (kind, value) in [(secrets::PRIVATE_KEY, text), (secrets::KEY_PASSPHRASE, passphrase)] {
             self.secrets.set(id, kind, value).map_err(|e| {
@@ -242,6 +214,7 @@ impl KeyService {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::core::ssh::keyfile::KeyKind;
     use crate::events::NoopSink;
     use crate::secrets::MemoryBackend;
 
@@ -300,34 +273,6 @@ pub(crate) mod tests {
         assert_eq!(svc.get(&k.id).unwrap_err().code, error::KEY_NOT_FOUND.0);
         assert_eq!(svc.material(&k.id).unwrap_err().code, error::KEY_NOT_FOUND.0);
         assert!(!svc.secrets.has(&k.id, secrets::PRIVATE_KEY), "删除密钥时删除私钥");
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn generate_saves_key() {
-        let dir = std::env::temp_dir().join(format!("rd-keys-{}", new_id()));
-        let svc = service(&dir);
-        let k = svc
-            .generate(KeyGenerateReq {
-                name: "laptop".into(),
-                passphrase: "pw".into(),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!((k.name.as_str(), k.algorithm.as_str()), ("laptop", "ssh-ed25519"));
-        assert!(k.encrypted && k.public_key.ends_with(" laptop"));
-        let (text, pass) = svc.material(&k.id).unwrap();
-        assert!(keyfile::decode(&text, &pass).is_ok());
-        assert_eq!(
-            svc.generate(KeyGenerateReq {
-                key_type: KeyType::Rsa,
-                bits: Some(1024),
-                ..Default::default()
-            })
-            .unwrap_err()
-            .code,
-            error::PARAM_INVALID.0
-        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }

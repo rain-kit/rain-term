@@ -1,15 +1,11 @@
-//! 私钥的解析和生成，密钥管理和登录共用。
+//! 私钥的解析，密钥管理和登录共用。
 
-use russh::keys::ssh_key::LineEnding;
-use russh::keys::ssh_key::private::{KeypairData, RsaKeypair};
-use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PrivateKey};
+use russh::keys::{HashAlg, PrivateKey};
 
 use crate::i18n::Msg;
 
 /// 私钥文本的长度上限，超过的肯定不是私钥。
 pub const MAX_KEY_SIZE: usize = 64 * 1024;
-/// 生成 RSA 密钥可选的位数。
-pub const RSA_BITS: [u32; 3] = [2048, 3072, 4096];
 
 /// 私钥的公开信息。
 #[derive(Debug, Clone)]
@@ -20,8 +16,6 @@ pub struct KeyInfo {
     pub bits: Option<u32>,
     /// SHA256:xxxx
     pub fingerprint: String,
-    /// authorized_keys 格式的一行公钥。
-    pub public_key: String,
     pub comment: String,
 }
 
@@ -53,40 +47,37 @@ pub fn info(key: &PrivateKey) -> KeyInfo {
         algorithm: key.algorithm().as_str().to_string(),
         bits: public.key_data().rsa().map(|k| k.key_size()),
         fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
-        public_key: public.to_openssh().unwrap_or_default(),
         comment: key.comment().as_str_lossy().to_string(),
     }
 }
 
-/// 要生成的密钥类型。
+/// 测试用的密钥类型。
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyKind {
     Ed25519,
     /// NIST P-256
     Ecdsa,
-    Rsa(u32),
 }
 
-/// 生成新的私钥，返回 OpenSSH 格式的文本；passphrase 不为空时加密。RSA 位数较大时要几秒钟。
+/// 生成测试用的私钥，返回 OpenSSH 格式的文本；passphrase 不为空时加密。程序里不提供生成密钥。
+#[cfg(test)]
 pub fn generate(
     kind: KeyKind,
     comment: &str,
     passphrase: &str,
 ) -> Result<String, russh::keys::ssh_key::Error> {
+    use russh::keys::ssh_key::LineEnding;
+    use russh::keys::{Algorithm, EcdsaCurve};
+
     let mut rng = russh::keys::key::safe_rng();
-    let mut key = match kind {
-        KeyKind::Ed25519 => PrivateKey::random(&mut rng, Algorithm::Ed25519)?,
-        KeyKind::Ecdsa => PrivateKey::random(
-            &mut rng,
-            Algorithm::Ecdsa {
-                curve: EcdsaCurve::NistP256,
-            },
-        )?,
-        KeyKind::Rsa(bits) => {
-            let pair = RsaKeypair::random(&mut rng, bits as usize)?;
-            PrivateKey::new(KeypairData::from(pair), "")?
-        }
+    let algorithm = match kind {
+        KeyKind::Ed25519 => Algorithm::Ed25519,
+        KeyKind::Ecdsa => Algorithm::Ecdsa {
+            curve: EcdsaCurve::NistP256,
+        },
     };
+    let mut key = PrivateKey::random(&mut rng, algorithm)?;
     key.set_comment(comment);
     if !passphrase.is_empty() {
         key = key.encrypt(&mut rng, passphrase)?;
@@ -107,7 +98,6 @@ mod tests {
         assert_eq!(i.algorithm, "ssh-ed25519");
         assert_eq!(i.bits, None);
         assert!(i.fingerprint.starts_with("SHA256:"));
-        assert!(i.public_key.starts_with("ssh-ed25519 ") && i.public_key.ends_with(" me@pc"));
         assert_eq!(i.comment, "me@pc");
 
         let text = generate(KeyKind::Ecdsa, "", "s3cret").unwrap();

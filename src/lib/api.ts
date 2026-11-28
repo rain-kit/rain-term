@@ -9,7 +9,6 @@ import type {
   HostKeyPrompt,
   I18nMsg,
   ImportResult,
-  KeyGenerateReq,
   KeyImportReq,
   MonitorEvent,
   RdpInput,
@@ -89,15 +88,11 @@ export const keyApi = {
   list: () => invoke<SshKey[]>("key_list"),
   /** 已经导入过同一个私钥时报错。 */
   import: (req: KeyImportReq) => invoke<SshKey>("key_import", { req }),
-  /** RSA 要几秒钟。 */
-  generate: (req: KeyGenerateReq) => invoke<SshKey>("key_generate", { req }),
   rename: (id: string, name: string) => invoke<SshKey>("key_rename", { id, name }),
   /** 还有连接在用时报错。 */
   remove: (id: string) => invoke<void>("key_delete", { id }),
   /** 选择私钥文件并读出内容；取消时返回 null。 */
   readFile: () => invoke<{ name: string; content: string } | null>("key_read_file"),
-  /** 选择保存位置并导出私钥，返回保存的路径；取消时返回 null。 */
-  exportTo: (id: string) => invoke<string | null>("key_export", { id }),
 };
 
 /** 登录用户，见 src-tauri/src/service/accounts.rs。 */

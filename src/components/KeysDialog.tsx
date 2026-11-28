@@ -1,28 +1,23 @@
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
-  Check,
-  Copy,
-  Download,
   FileUp,
   KeyRound,
   Lock,
   MoreHorizontal,
   Pencil,
   Search,
-  Sparkles,
   Trash2,
   UserPlus,
   UserRound,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { keyApi } from "../lib/api";
 import { formatTime, keyTypeLabel } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useAccounts, useConns, useKeys, useToast } from "../lib/store";
 import type { AccountView, ConnView, SshKey } from "../lib/types";
 import AccountsPanel from "./AccountsPanel";
-import KeyImportDialog, { KeyGenerateDialog } from "./KeyImportDialog";
+import KeyImportDialog from "./KeyImportDialog";
 import KindIcon from "./KindIcon";
 import { Button, Card, Confirm, ContextMenu, cx, Dialog, Empty, Field, IconButton, Input, Menu, Segmented, Tag, type MenuItem } from "./ui";
 
@@ -50,7 +45,7 @@ function CountPill({ count, active }: { count: number; active: boolean }) {
 }
 
 /**
- * 密钥/用户窗口：“密钥”页导入、生成、改名、导出和删除密钥，复制公钥；“用户”页管理登录用户。
+ * 密钥/用户窗口：“密钥”页导入、改名和删除密钥，密钥内容不能导出或复制，也不能在程序里生成；“用户”页管理登录用户。
  * tab 是打开时显示的页；onAdded、onAccountAdded 在新增密钥、新建用户后调用。
  */
 export default function KeysDialog({
@@ -74,28 +69,18 @@ export default function KeysDialog({
   const [tab, setTab] = useState<KeysTab>(initialTab);
   const [q, setQ] = useState("");
   const [importing, setImporting] = useState(false);
-  const [generating, setGenerating] = useState(false);
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [renaming, setRenaming] = useState<SshKey | null>(null);
   const [newName, setNewName] = useState("");
   const [deleting, setDeleting] = useState<SshKey | null>(null);
   const [refInfo, setRefInfo] = useState<{ mode: "inUse" | "usage"; key: SshKey; users: ConnView[]; accounts: AccountView[] } | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ at: { x: number; y: number }; key: SshKey } | null>(null);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setTab(initialTab);
     setQ("");
   }, [open, initialTab]);
-
-  useEffect(
-    () => () => {
-      if (copyTimer.current) clearTimeout(copyTimer.current);
-    },
-    [],
-  );
 
   const switchTab = (next: KeysTab) => {
     setTab(next);
@@ -110,23 +95,6 @@ export default function KeysDialog({
     if (!s) return keys;
     return keys.filter((k) => [k.name, keyTypeLabel(k), k.fingerprint].some((v) => v.toLowerCase().includes(s)));
   }, [keys, q]);
-
-  const copyPublic = (k: SshKey) =>
-    writeText(k.publicKey).then(() => {
-      toast.success(t("keys.publicCopied"));
-      setCopiedId(k.id);
-      if (copyTimer.current) clearTimeout(copyTimer.current);
-      copyTimer.current = setTimeout(() => setCopiedId((cur) => (cur === k.id ? null : cur)), 1500);
-    }, toast.error);
-
-  const exportKey = async (k: SshKey) => {
-    try {
-      const path = await keyApi.exportTo(k.id);
-      if (path) toast.success(t("keys.exported", { path }));
-    } catch (e) {
-      toast.error(e);
-    }
-  };
 
   const askDelete = (k: SshKey) => {
     const list = users.get(k.id) ?? [];
@@ -150,10 +118,8 @@ export default function KeysDialog({
     }
   };
 
-  const keyMenuItems = (k: SshKey, includeCopy = false): MenuItem[] => [
-    ...(includeCopy ? [{ label: t("keys.copyPublic"), icon: <Copy size={14} />, onClick: () => void copyPublic(k) }] : []),
+  const keyMenuItems = (k: SshKey): MenuItem[] => [
     { label: t("keys.rename"), icon: <Pencil size={14} />, onClick: () => startRename(k) },
-    { label: t("keys.export"), icon: <Download size={14} />, onClick: () => exportKey(k) },
     { label: t("common.delete"), icon: <Trash2 size={14} />, danger: true, divider: true, onClick: () => askDelete(k) },
   ];
 
@@ -231,14 +197,9 @@ export default function KeysDialog({
               </div>
             )}
             {tab === "keys" ? (
-              <>
-                <Button size="sm" icon={<FileUp size={13} />} onClick={() => setImporting(true)}>
-                  {t("keys.importTitle")}
-                </Button>
-                <Button size="sm" variant="primary" icon={<Sparkles size={13} />} onClick={() => setGenerating(true)}>
-                  {t("keys.generateTitle")}
-                </Button>
-              </>
+              <Button size="sm" variant="primary" icon={<FileUp size={13} />} onClick={() => setImporting(true)}>
+                {t("keys.importTitle")}
+              </Button>
             ) : (
               <Button size="sm" variant="primary" icon={<UserPlus size={13} />} onClick={() => setCreatingAccount(true)}>
                 {t("accounts.newTitle")}
@@ -264,14 +225,9 @@ export default function KeysDialog({
                 title={t("keys.empty")}
                 desc={t("keys.emptyDesc")}
                 action={
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" icon={<FileUp size={14} />} onClick={() => setImporting(true)}>
-                      {t("keys.importTitle")}
-                    </Button>
-                    <Button size="sm" variant="primary" icon={<Sparkles size={14} />} onClick={() => setGenerating(true)}>
-                      {t("keys.generateTitle")}
-                    </Button>
-                  </div>
+                  <Button size="sm" variant="primary" icon={<FileUp size={14} />} onClick={() => setImporting(true)}>
+                    {t("keys.importTitle")}
+                  </Button>
                 }
               />
             ) : filteredKeys.length === 0 ? (
@@ -284,7 +240,6 @@ export default function KeysDialog({
                   const count = connList.length;
                   const accountCount = accList.length;
                   const used = count > 0 || accountCount > 0;
-                  const copied = copiedId === k.id;
                   const usageSummary = [
                     count > 0 ? t("keys.usedBy", { count }) : "",
                     accountCount > 0 ? t("keys.usedByAccounts", { count: accountCount }) : "",
@@ -344,9 +299,6 @@ export default function KeysDialog({
                         )}
                       </div>
                       <div className="flex shrink-0 items-center gap-0.5">
-                        <IconButton label={t("keys.copyPublic")} size="sm" onClick={() => copyPublic(k)}>
-                          {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                        </IconButton>
                         <Menu
                           items={keyMenuItems(k)}
                           trigger={(openMenu) => (
@@ -367,13 +319,11 @@ export default function KeysDialog({
 
       <ContextMenu
         at={ctxMenu?.at ?? null}
-        items={ctxMenu ? keyMenuItems(ctxMenu.key, true) : []}
+        items={ctxMenu ? keyMenuItems(ctxMenu.key) : []}
         onClose={() => setCtxMenu(null)}
       />
 
       <KeyImportDialog open={importing} onClose={() => setImporting(false)} onDone={onAdded} />
-      <KeyGenerateDialog open={generating} onClose={() => setGenerating(false)} onDone={onAdded} />
-
       <Dialog
         open={!!renaming}
         onClose={() => setRenaming(null)}

@@ -127,8 +127,6 @@ pub const KEY_INVALID: Code = Code(700002, "err.keyInvalid", "密钥无效");
 pub const KEY_EXISTS: Code = Code(700003, "err.keyExists", "这个密钥已经导入过");
 pub const KEY_IN_USE: Code = Code(700004, "err.keyInUse", "密钥正被连接使用");
 pub const KEY_FILE_IO: Code = Code(700005, "err.keyFileIo", "读写 keys.json 失败");
-pub const KEY_GENERATE_FAILED: Code = Code(700006, "err.keyGenerateFailed", "生成密钥失败");
-
 // -------------------- 登录用户 800000 -------------------- //
 pub const ACCOUNT_NOT_FOUND: Code = Code(800001, "err.accountNotFound", "用户不存在，可能已被删除");
 pub const ACCOUNT_INVALID: Code = Code(800002, "err.accountInvalid", "用户配置无效");

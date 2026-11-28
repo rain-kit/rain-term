@@ -169,8 +169,6 @@ export interface SshKey {
   bits?: number;
   /** SHA256:xxxx */
   fingerprint: string;
-  /** authorized_keys 格式的一行公钥 */
-  publicKey: string;
   /** 私钥设置了密码 */
   encrypted: boolean;
   createdAt?: string;
@@ -180,16 +178,6 @@ export interface SshKey {
 export interface KeyImportReq {
   name: string;
   content: string;
-  passphrase: string;
-}
-
-export type KeyType = "ed25519" | "ecdsa" | "rsa";
-
-/** bits 只对 RSA 有效。 */
-export interface KeyGenerateReq {
-  name: string;
-  type: KeyType;
-  bits?: number;
   passphrase: string;
 }
 

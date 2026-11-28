@@ -521,8 +521,6 @@ pub struct SshKey {
     pub bits: Option<u32>,
     /// SHA256:xxxx
     pub fingerprint: String,
-    /// authorized_keys 格式的一行公钥。
-    pub public_key: String,
     /// 私钥是否设置了密码。
     pub encrypted: bool,
     pub created_at: Option<DateTime<Local>>,
@@ -534,27 +532,6 @@ pub struct SshKey {
 pub struct KeyImportReq {
     pub name: String,
     pub content: String,
-    pub passphrase: String,
-}
-
-/// 生成密钥的类型。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum KeyType {
-    #[default]
-    Ed25519,
-    Ecdsa,
-    Rsa,
-}
-
-/// 生成密钥：bits 只对 RSA 有效。
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct KeyGenerateReq {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub key_type: KeyType,
-    pub bits: Option<u32>,
     pub passphrase: String,
 }
 
