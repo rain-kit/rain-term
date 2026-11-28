@@ -15,11 +15,13 @@ import {
 } from "../lib/format";
 import { t, useI18n } from "../lib/i18n";
 import { useAccounts, useConns, useKeys, useSettings, useToast } from "../lib/store";
-import type { AccountView, AuthType, ConnKind, ConnView, RdpResolution, SaveConnReq, SftpSudo } from "../lib/types";
+import type { AccountAuth, AccountView, ConnKind, ConnView, RdpResolution, SaveConnReq, SftpSudo } from "../lib/types";
 import { accountAllows, accountLabel } from "./AccountsPanel";
 import KeysDialog, { type KeysTab } from "./KeysDialog";
 import KindIcon from "./KindIcon";
 import { Button, cx, Dialog, Field, Input, PasswordInput, Segmented, Select, SwitchRow } from "./ui";
+
+type AuthMode = AccountAuth | "account";
 
 interface Form {
   kind: ConnKind;
@@ -30,14 +32,14 @@ interface Form {
   production: boolean;
   host: string;
   port: string;
-  /** 登录用户，选了之后不用填用户名、密码和私钥。 */
+  /** 认证方式选“登录用户”时使用的用户 ID，选了之后不用填用户名、密码和私钥。 */
   accountId: string;
   user: string;
   password: string;
   jumpId: string;
+  auth: AuthMode;
   // SSH
   incognito: boolean;
-  auth: AuthType;
   keyId: string;
   keepaliveSeconds: string;
   initDir: string;
@@ -72,8 +74,9 @@ function toForm(c?: ConnView | null): Form {
     password: "",
     jumpId: c?.jumpId ?? "",
     incognito: !!ssh?.incognito,
-    // 登录用户的认证方式和密钥不带进表单，改回直接填写时从密码开始。
-    auth: (!c?.accountId && ssh?.auth) || "password",
+    // 新建时默认用登录用户；选了登录用户时认证方式切到“登录用户”，改回其他方式时不带入登录用户的密钥。
+    // 编辑器不再提供 SSH Agent，旧连接编辑时按新建处理，需要重新选择认证方式。
+    auth: !c || c.accountId || ssh?.auth === "agent" ? "account" : ssh?.auth ?? "password",
     keyId: (!c?.accountId && ssh?.keyId) || "",
     keepaliveSeconds: String(ssh?.keepaliveSeconds ?? 30),
     initDir: ssh?.initDir ?? "",
@@ -92,9 +95,13 @@ function validate(f: Form): Errors {
   const e: Errors = {};
   if (!f.host.trim()) e.host = t("editor.required");
   if (!isInt(f.port, 1, 65535)) e.port = t("editor.err.port");
-  if (!f.accountId && !f.user.trim()) e.user = t("editor.required");
+  if (f.auth === "account") {
+    if (!f.accountId) e.accountId = t("editor.err.accountRequired");
+  } else if (!f.user.trim()) {
+    e.user = t("editor.required");
+  }
   if (f.kind === "ssh") {
-    if (!f.accountId && f.auth === "key" && !f.keyId) e.keyId = t("editor.err.keyRequired");
+    if (f.auth === "key" && !f.keyId) e.keyId = t("editor.err.keyRequired");
     if (!isInt(f.keepaliveSeconds, 0, 3600)) e.keepaliveSeconds = t("editor.err.keepalive");
   } else if (f.resolution === "fixed") {
     const msg = t("editor.err.rdpSize", { min: RDP_MIN_SIZE, max: RDP_MAX_SIZE });
@@ -105,6 +112,8 @@ function validate(f: Form): Errors {
 }
 
 function toReq(f: Form, id: string): SaveConnReq {
+  // 选了登录用户时用户名、密码和私钥由后端从登录用户填入。
+  const account = f.auth === "account";
   const common = {
     id,
     name: f.name.trim(),
@@ -114,12 +123,10 @@ function toReq(f: Form, id: string): SaveConnReq {
     production: f.production,
     host: f.host.trim(),
     port: Number(f.port),
-    accountId: f.accountId,
+    accountId: account ? f.accountId : "",
     user: f.user.trim(),
     jumpId: f.jumpId,
   };
-  // 选了登录用户时用户名、密码和私钥由后端从登录用户填入。
-  const account = !!f.accountId;
   if (f.kind === "rdp") {
     return {
       ...common,
@@ -135,7 +142,7 @@ function toReq(f: Form, id: string): SaveConnReq {
   return {
     ...common,
     kind: "ssh",
-    auth: f.auth,
+    auth: f.auth === "account" ? "password" : f.auth,
     keyId: !account && f.auth === "key" ? f.keyId : "",
     password: !account && f.auth === "password" ? f.password : "",
     keepaliveSeconds: Number(f.keepaliveSeconds),
@@ -223,23 +230,36 @@ export default function ConnEditor({
   const setKind = (kind: ConnKind) => {
     setForm((x) => {
       const acc = accounts.find((a) => a.id === x.accountId);
+      const disallowAcc = acc && !accountAllows(acc, kind);
       return {
         ...x,
         kind,
         port: x.port.trim() === String(DEFAULT_PORT[x.kind]) ? String(DEFAULT_PORT[kind]) : x.port,
-        user: x.user.trim() === DEFAULT_USER[x.kind] ? DEFAULT_USER[kind] : x.user,
-        accountId: acc && !accountAllows(acc, kind) ? "" : x.accountId,
+        user:
+          x.user.trim() === DEFAULT_USER[x.kind] || (disallowAcc && x.user === acc.user)
+            ? DEFAULT_USER[kind]
+            : x.user,
+        auth: kind === "rdp" && x.auth !== "account" ? "password" : x.auth,
+        accountId: disallowAcc ? "" : x.accountId,
       };
     });
     setErrors({});
   };
+  const setAuth = (auth: AuthMode) => {
+    setForm((x) => {
+      const acc = auth === "account" ? accounts.find((a) => a.id === x.accountId) : undefined;
+      return { ...x, auth, user: acc?.user ?? x.user };
+    });
+    setErrors((e) => ({ ...e, user: undefined, accountId: undefined, keyId: undefined }));
+  };
   // 刚新建的用户还不在列表里，由调用方直接传入。
   const setAccount = (id: string, acc = accounts.find((a) => a.id === id)) => {
-    setForm((x) => ({ ...x, accountId: id, user: acc?.user ?? x.user }));
-    setErrors((e) => ({ ...e, user: undefined, keyId: undefined }));
+    setForm((x) => ({ ...x, auth: "account", accountId: id, user: acc?.user ?? x.user }));
+    setErrors((e) => ({ ...e, user: undefined, accountId: undefined, keyId: undefined }));
   };
   const rdp = f.kind === "rdp";
-  const account = accounts.find((a) => a.id === f.accountId);
+  const useAccount = f.auth === "account";
+  const account = accounts.find((a) => a.id === f.accountId && accountAllows(a, f.kind));
 
   const groups = useMemo(() => [...new Set([...loadGroups(), ...conns.map((c) => c.group).filter(Boolean)])] as string[], [conns, open]);
 
@@ -267,10 +287,11 @@ export default function ConnEditor({
 
   // 只列出能用于当前类型的登录用户。
   const accountOptions = useMemo(() => {
-    const opts = accounts.filter((a) => accountAllows(a, f.kind)).map((a) => ({ value: a.id, label: accountLabel(a) }));
+    const usable = accounts.filter((a) => accountAllows(a, f.kind));
+    const opts = usable.map((a) => ({ value: a.id, label: accountLabel(a) }));
     // 选中的用户已被删除或不能用于这种连接时也显示出来，保存时由后端报错。
     if (f.accountId && !opts.some((o) => o.value === f.accountId)) opts.push({ value: f.accountId, label: t("editor.accountMissing") });
-    return [{ value: "", label: t("editor.accountNone") }, ...opts];
+    return [{ value: "", label: t(usable.length ? "editor.accountNone" : "editor.accountEmpty") }, ...opts];
   }, [accounts, f.kind, f.accountId, t]);
 
   const accountHint = (a: AccountView) =>
@@ -375,44 +396,58 @@ export default function ConnEditor({
             <Input value={f.port} invalid={!!errors.port} onChange={(e) => set("port", e.target.value)} />
           </Field>
         </Row>
-        <Field label={t("editor.account")} hint={account ? accountHint(account) : t("editor.accountNoneHint")}>
-          <div className="flex gap-2">
-            <Select className="min-w-0 flex-1" value={f.accountId} onChange={(v) => setAccount(v)} options={accountOptions} />
-            <Button type="button" icon={<Plus size={14} />} onClick={() => setManage("accounts")}>
-              {t("editor.keyAdd")}
-            </Button>
-          </div>
-        </Field>
-        {f.accountId ? null : rdp ? (
-          <>
-            <Field label={t("editor.user")} error={errors.user} hint={t("editor.rdpUserHint")}>
+        <Row>
+          <Field
+            label={t("editor.user")}
+            error={useAccount ? errors.accountId : errors.user}
+            hint={!useAccount && rdp ? t("editor.rdpUserHint") : undefined}
+          >
+            {useAccount ? (
+              <div className="flex gap-1.5">
+                <Select
+                  className="min-w-0 flex-1"
+                  value={f.accountId}
+                  invalid={!!errors.accountId}
+                  onChange={(v) => setAccount(v)}
+                  options={accountOptions}
+                />
+                <Button
+                  type="button"
+                  className="w-8.5 shrink-0 px-0"
+                  title={t("editor.keyAdd")}
+                  aria-label={t("editor.keyAdd")}
+                  onClick={() => setManage("accounts")}
+                >
+                  <Plus size={15} />
+                </Button>
+              </div>
+            ) : (
               <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
-            </Field>
-            <SecretField
-              label={t("editor.password")}
-              saved={!!conn?.hasPassword}
-              value={f.password}
-              onChange={(v) => set("password", v)}
+            )}
+          </Field>
+          <Field label={t("editor.authType")} className="!flex-none">
+            <Segmented<AuthMode>
+              value={f.auth}
+              onChange={setAuth}
+              options={
+                rdp
+                  ? [
+                      { value: "account", label: t("editor.account") },
+                      { value: "password", label: t("editor.auth.password") },
+                    ]
+                  : [
+                      { value: "account", label: t("editor.account") },
+                      { value: "password", label: t("editor.auth.password") },
+                      { value: "key", label: t("editor.auth.key") },
+                    ]
+              }
             />
-          </>
+          </Field>
+        </Row>
+        {useAccount ? (
+          <p className="-mt-1.5 text-xs text-muted">{account ? accountHint(account) : t("editor.accountNoneHint")}</p>
         ) : (
           <>
-            <Row>
-              <Field label={t("editor.user")} error={errors.user}>
-                <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
-              </Field>
-              <Field label={t("editor.authType")} className="!flex-none">
-                <Segmented<AuthType>
-                  value={f.auth}
-                  onChange={(v) => set("auth", v)}
-                  options={[
-                    { value: "password", label: t("editor.auth.password") },
-                    { value: "key", label: t("editor.auth.key") },
-                    { value: "agent", label: "SSH Agent" },
-                  ]}
-                />
-              </Field>
-            </Row>
             {f.auth === "password" && (
               <SecretField
                 label={t("editor.password")}
@@ -424,14 +459,19 @@ export default function ConnEditor({
             {f.auth === "key" && (
               <Field label={t("editor.key")} error={errors.keyId} hint={t("editor.keyHint")}>
                 <div className="flex gap-2">
-                  <Select className="min-w-0 flex-1" value={f.keyId} onChange={(v) => set("keyId", v)} options={keyOptions} />
+                  <Select
+                    className="min-w-0 flex-1"
+                    value={f.keyId}
+                    invalid={!!errors.keyId}
+                    onChange={(v) => set("keyId", v)}
+                    options={keyOptions}
+                  />
                   <Button type="button" icon={<Plus size={14} />} onClick={() => setManage("keys")}>
                     {t("editor.keyAdd")}
                   </Button>
                 </div>
               </Field>
             )}
-            {f.auth === "agent" && <p className="text-xs text-muted">{t("editor.agentHint")}</p>}
           </>
         )}
       </Section>

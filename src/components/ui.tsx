@@ -167,11 +167,13 @@ export function Select<T extends string>({
   value,
   options,
   onChange,
+  invalid,
   className,
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (v: T) => void;
+  invalid?: boolean;
   className?: string;
 }) {
   return (
@@ -179,7 +181,11 @@ export function Select<T extends string>({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
-        className={cx(inputBase, "border-line appearance-none pr-8")}
+        className={cx(
+          inputBase,
+          invalid ? "border-red-500 focus:border-red-500 focus:ring-red-500/15" : "border-line",
+          "appearance-none truncate pr-8",
+        )}
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -270,7 +276,7 @@ export function Segmented<T extends string>({
           type="button"
           onClick={() => onChange(o.value)}
           className={cx(
-            "flex items-center gap-1.5 rounded-md px-3 text-[13px] transition-colors",
+            "flex items-center gap-1.5 rounded-md px-3 text-[13px] whitespace-nowrap transition-colors",
             value === o.value ? "bg-surface text-ink shadow-sm font-medium" : "text-muted hover:text-ink",
           )}
         >

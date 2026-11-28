@@ -147,7 +147,7 @@ function AccountEditor({
         ) : (
           <Field label={t("editor.key")} error={errors.keyId}>
             <div className="flex gap-2">
-              <Select className="min-w-0 flex-1" value={f.keyId} onChange={(v) => set("keyId", v)} options={keyOptions} />
+              <Select className="min-w-0 flex-1" value={f.keyId} invalid={!!errors.keyId} onChange={(v) => set("keyId", v)} options={keyOptions} />
               <Button type="button" icon={<FileUp size={14} />} onClick={() => setImporting(true)}>
                 {t("keys.import")}
               </Button>
