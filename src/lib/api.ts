@@ -2,6 +2,7 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { tm } from "./i18n";
 import type {
+  AccountView,
   ConnView,
   ExportResult,
   FilePreview,
@@ -12,6 +13,7 @@ import type {
   MonitorEvent,
   RdpInput,
   RdpNotice,
+  SaveAccountReq,
   SaveConnReq,
   Listing,
   SessionClosed,
@@ -92,6 +94,15 @@ export const keyApi = {
   readFile: () => invoke<{ name: string; content: string } | null>("key_read_file"),
   /** 选择保存位置并导出私钥，返回保存的路径；取消时返回 null。 */
   exportTo: (id: string) => invoke<string | null>("key_export", { id }),
+};
+
+/** 登录用户，见 src-tauri/src/service/accounts.rs。 */
+export const accountApi = {
+  list: () => invoke<AccountView[]>("account_list"),
+  /** 正在使用它的连接用不了修改后的用户时报错。 */
+  save: (req: SaveAccountReq) => invoke<AccountView>("account_save", { req }),
+  /** 还有连接在用时报错。 */
+  remove: (id: string) => invoke<void>("account_delete", { id }),
 };
 
 export const hostKeyApi = {
@@ -221,6 +232,7 @@ export const updateApi = {
 export const events = {
   onConnChanged: (fn: () => void) => sub<null>("conn:changed", () => fn()),
   onKeysChanged: (fn: () => void) => sub<null>("keys:changed", () => fn()),
+  onAccountsChanged: (fn: () => void) => sub<null>("accounts:changed", () => fn()),
   /** 设置在设置页以外被修改（导入连接时带入了工具配置）。 */
   onSettingsChanged: (fn: () => void) => sub<null>("settings:changed", () => fn()),
   onHostKey: (fn: (p: HostKeyPrompt) => void) => sub<HostKeyPrompt>("hostkey:prompt", fn),

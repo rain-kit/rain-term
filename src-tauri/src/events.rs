@@ -3,6 +3,8 @@
 pub const CONN_CHANGED: &str = "conn:changed";
 /// 密钥管理的列表变化（导入、生成、改名、删除），前端收到后重新拉取密钥列表。
 pub const KEYS_CHANGED: &str = "keys:changed";
+/// 登录用户的列表变化（新建、修改、删除），前端收到后重新拉取用户列表。
+pub const ACCOUNTS_CHANGED: &str = "accounts:changed";
 /// 设置在设置页以外被修改（导入连接时带入了工具配置），前端收到后重新读取设置。
 pub const SETTINGS_CHANGED: &str = "settings:changed";
 /// 需要用户确认主机指纹，载荷为 HostKeyPrompt。

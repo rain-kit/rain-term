@@ -287,6 +287,11 @@ export function Card({ className, children }: { className?: string; children: Re
   return <div className={cx("rounded-xl border border-line bg-surface", className)}>{children}</div>;
 }
 
+/** 名称旁边的灰色小标签。 */
+export function Tag({ children }: { children: ReactNode }) {
+  return <span className="flex shrink-0 items-center gap-0.5 rounded bg-subtle px-1.5 text-[10px] leading-4 font-medium text-muted">{children}</span>;
+}
+
 /** 连接名旁边的“生产”标记。 */
 export function ProdBadge() {
   const { t } = useI18n();

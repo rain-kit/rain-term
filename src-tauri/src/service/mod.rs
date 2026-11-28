@@ -1,3 +1,4 @@
+pub mod accounts;
 pub mod conn;
 mod finalshell;
 pub mod hostkey;

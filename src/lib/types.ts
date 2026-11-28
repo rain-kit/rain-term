@@ -73,7 +73,10 @@ export interface SshParams {
   kind: "ssh";
   host: string;
   port: number;
+  /** 选了登录用户时是登录用户的用户名 */
   user: string;
+  /** 登录用户（Account），设置后用户名、认证方式、密码和私钥都来自登录用户 */
+  accountId?: string;
   auth: AuthType;
   /** 私钥认证使用的密钥（密钥管理里的 SshKey） */
   keyId?: string;
@@ -99,7 +102,10 @@ export interface RdpParams {
   kind: "rdp";
   host: string;
   port: number;
+  /** 选了登录用户时是登录用户的用户名 */
   user: string;
+  /** 登录用户（Account），设置后用户名和密码都来自登录用户 */
+  accountId?: string;
   /** 经这个 SSH 连接转发到远程桌面 */
   jumpId?: string;
   resolution: RdpResolution;
@@ -175,6 +181,31 @@ export interface KeyGenerateReq {
   bits?: number;
   passphrase: string;
 }
+
+// ---------- 登录用户，见 src-tauri/src/service/accounts.rs ----------
+
+/** 登录用户能用于哪些连接；私钥认证只能用于 SSH。 */
+export type AccountScope = "all" | "ssh" | "rdp";
+export type AccountAuth = Exclude<AuthType, "agent">;
+
+export interface Account {
+  /** 新建时为空字符串 */
+  id: string;
+  /** 为空时用用户名 */
+  name: string;
+  user: string;
+  auth: AccountAuth;
+  /** 私钥认证使用的密钥（密钥管理里的 SshKey） */
+  keyId?: string;
+  scope: AccountScope;
+  createdAt?: string;
+}
+
+/** 后端返回的登录用户不含密码，只告诉前端是否已保存。 */
+export type AccountView = Account & { hasPassword: boolean };
+
+/** 保存登录用户：密码留空表示不修改，clearPassword 为 true 时删除已保存的密码。 */
+export type SaveAccountReq = Account & { password?: string; clearPassword?: boolean };
 
 // ---------- SSH ----------
 

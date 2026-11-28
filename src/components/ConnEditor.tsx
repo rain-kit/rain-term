@@ -14,9 +14,10 @@ import {
   type ConnColor,
 } from "../lib/format";
 import { t, useI18n } from "../lib/i18n";
-import { useConns, useKeys, useSettings, useToast } from "../lib/store";
-import type { AuthType, ConnKind, ConnView, RdpResolution, SaveConnReq, SftpSudo } from "../lib/types";
-import KeysDialog from "./KeysDialog";
+import { useAccounts, useConns, useKeys, useSettings, useToast } from "../lib/store";
+import type { AccountView, AuthType, ConnKind, ConnView, RdpResolution, SaveConnReq, SftpSudo } from "../lib/types";
+import { accountAllows, accountLabel } from "./AccountsPanel";
+import KeysDialog, { type KeysTab } from "./KeysDialog";
 import KindIcon from "./KindIcon";
 import { Button, cx, Dialog, Field, Input, PasswordInput, Segmented, Select, SwitchRow } from "./ui";
 
@@ -29,6 +30,8 @@ interface Form {
   production: boolean;
   host: string;
   port: string;
+  /** 登录用户，选了之后不用填用户名、密码和私钥。 */
+  accountId: string;
   user: string;
   password: string;
   jumpId: string;
@@ -64,12 +67,14 @@ function toForm(c?: ConnView | null): Form {
     production: !!c?.production,
     host: c?.host ?? "",
     port: String(c?.port ?? DEFAULT_PORT[kind]),
+    accountId: c?.accountId ?? "",
     user: c?.user ?? DEFAULT_USER[kind],
     password: "",
     jumpId: c?.jumpId ?? "",
     incognito: !!ssh?.incognito,
-    auth: ssh?.auth ?? "password",
-    keyId: ssh?.keyId ?? "",
+    // 登录用户的认证方式和密钥不带进表单，改回直接填写时从密码开始。
+    auth: (!c?.accountId && ssh?.auth) || "password",
+    keyId: (!c?.accountId && ssh?.keyId) || "",
     keepaliveSeconds: String(ssh?.keepaliveSeconds ?? 30),
     initDir: ssh?.initDir ?? "",
     sftpSudo: ssh?.sftpSudo ?? "default",
@@ -87,9 +92,9 @@ function validate(f: Form): Errors {
   const e: Errors = {};
   if (!f.host.trim()) e.host = t("editor.required");
   if (!isInt(f.port, 1, 65535)) e.port = t("editor.err.port");
-  if (!f.user.trim()) e.user = t("editor.required");
+  if (!f.accountId && !f.user.trim()) e.user = t("editor.required");
   if (f.kind === "ssh") {
-    if (f.auth === "key" && !f.keyId) e.keyId = t("editor.err.keyRequired");
+    if (!f.accountId && f.auth === "key" && !f.keyId) e.keyId = t("editor.err.keyRequired");
     if (!isInt(f.keepaliveSeconds, 0, 3600)) e.keepaliveSeconds = t("editor.err.keepalive");
   } else if (f.resolution === "fixed") {
     const msg = t("editor.err.rdpSize", { min: RDP_MIN_SIZE, max: RDP_MAX_SIZE });
@@ -109,9 +114,12 @@ function toReq(f: Form, id: string): SaveConnReq {
     production: f.production,
     host: f.host.trim(),
     port: Number(f.port),
+    accountId: f.accountId,
     user: f.user.trim(),
     jumpId: f.jumpId,
   };
+  // 选了登录用户时用户名、密码和私钥由后端从登录用户填入。
+  const account = !!f.accountId;
   if (f.kind === "rdp") {
     return {
       ...common,
@@ -121,15 +129,15 @@ function toReq(f: Form, id: string): SaveConnReq {
       width: isSize(f.width) ? Number(f.width) : DEFAULT_WIDTH,
       height: isSize(f.height) ? Number(f.height) : DEFAULT_HEIGHT,
       clipboard: f.clipboard,
-      password: f.password,
+      password: account ? "" : f.password,
     };
   }
   return {
     ...common,
     kind: "ssh",
     auth: f.auth,
-    keyId: f.auth === "key" ? f.keyId : "",
-    password: f.auth === "password" ? f.password : "",
+    keyId: !account && f.auth === "key" ? f.keyId : "",
+    password: !account && f.auth === "password" ? f.password : "",
     keepaliveSeconds: Number(f.keepaliveSeconds),
     initDir: f.initDir.trim(),
     sftpSudo: f.sftpSudo,
@@ -195,7 +203,8 @@ export default function ConnEditor({
   const [errors, setErrors] = useState<Errors>({});
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const { keys } = useKeys();
-  const [manageKeys, setManageKeys] = useState(false);
+  const { accounts } = useAccounts();
+  const [manage, setManage] = useState<KeysTab | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -210,17 +219,27 @@ export default function ConnEditor({
     setForm((x) => ({ ...x, [k]: v }));
     if (errors[k]) setErrors((e) => ({ ...e, [k]: undefined }));
   };
-  // 切换类型时端口、用户名还是原类型的默认值就换成新类型的默认值。
+  // 切换类型时端口、用户名还是原类型的默认值就换成新类型的默认值；选的登录用户不能用于新类型时取消选择。
   const setKind = (kind: ConnKind) => {
-    setForm((x) => ({
-      ...x,
-      kind,
-      port: x.port.trim() === String(DEFAULT_PORT[x.kind]) ? String(DEFAULT_PORT[kind]) : x.port,
-      user: x.user.trim() === DEFAULT_USER[x.kind] ? DEFAULT_USER[kind] : x.user,
-    }));
+    setForm((x) => {
+      const acc = accounts.find((a) => a.id === x.accountId);
+      return {
+        ...x,
+        kind,
+        port: x.port.trim() === String(DEFAULT_PORT[x.kind]) ? String(DEFAULT_PORT[kind]) : x.port,
+        user: x.user.trim() === DEFAULT_USER[x.kind] ? DEFAULT_USER[kind] : x.user,
+        accountId: acc && !accountAllows(acc, kind) ? "" : x.accountId,
+      };
+    });
     setErrors({});
   };
+  // 刚新建的用户还不在列表里，由调用方直接传入。
+  const setAccount = (id: string, acc = accounts.find((a) => a.id === id)) => {
+    setForm((x) => ({ ...x, accountId: id, user: acc?.user ?? x.user }));
+    setErrors((e) => ({ ...e, user: undefined, keyId: undefined }));
+  };
   const rdp = f.kind === "rdp";
+  const account = accounts.find((a) => a.id === f.accountId);
 
   const groups = useMemo(() => [...new Set([...loadGroups(), ...conns.map((c) => c.group).filter(Boolean)])] as string[], [conns, open]);
 
@@ -245,6 +264,20 @@ export default function ConnEditor({
     if (f.keyId && !keys.some((k) => k.id === f.keyId)) opts.push({ value: f.keyId, label: t("editor.keyMissing") });
     return [{ value: "", label: t(keys.length ? "editor.keyNone" : "editor.keyEmpty") }, ...opts];
   }, [keys, f.keyId, t]);
+
+  // 只列出能用于当前类型的登录用户。
+  const accountOptions = useMemo(() => {
+    const opts = accounts.filter((a) => accountAllows(a, f.kind)).map((a) => ({ value: a.id, label: accountLabel(a) }));
+    // 选中的用户已被删除或不能用于这种连接时也显示出来，保存时由后端报错。
+    if (f.accountId && !opts.some((o) => o.value === f.accountId)) opts.push({ value: f.accountId, label: t("editor.accountMissing") });
+    return [{ value: "", label: t("editor.accountNone") }, ...opts];
+  }, [accounts, f.kind, f.accountId, t]);
+
+  const accountHint = (a: AccountView) =>
+    t("editor.accountHint", {
+      user: a.user,
+      auth: a.auth === "key" ? `${t("editor.auth.key")} ${keys.find((k) => k.id === a.keyId)?.name ?? ""}`.trim() : t("editor.auth.password"),
+    });
 
   const check = () => {
     const errs = validate(f);
@@ -342,7 +375,15 @@ export default function ConnEditor({
             <Input value={f.port} invalid={!!errors.port} onChange={(e) => set("port", e.target.value)} />
           </Field>
         </Row>
-        {rdp ? (
+        <Field label={t("editor.account")} hint={account ? accountHint(account) : t("editor.accountNoneHint")}>
+          <div className="flex gap-2">
+            <Select className="min-w-0 flex-1" value={f.accountId} onChange={(v) => setAccount(v)} options={accountOptions} />
+            <Button type="button" icon={<Plus size={14} />} onClick={() => setManage("accounts")}>
+              {t("editor.keyAdd")}
+            </Button>
+          </div>
+        </Field>
+        {f.accountId ? null : rdp ? (
           <>
             <Field label={t("editor.user")} error={errors.user} hint={t("editor.rdpUserHint")}>
               <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
@@ -384,7 +425,7 @@ export default function ConnEditor({
               <Field label={t("editor.key")} error={errors.keyId} hint={t("editor.keyHint")}>
                 <div className="flex gap-2">
                   <Select className="min-w-0 flex-1" value={f.keyId} onChange={(v) => set("keyId", v)} options={keyOptions} />
-                  <Button type="button" icon={<Plus size={14} />} onClick={() => setManageKeys(true)}>
+                  <Button type="button" icon={<Plus size={14} />} onClick={() => setManage("keys")}>
                     {t("editor.keyAdd")}
                   </Button>
                 </div>
@@ -516,7 +557,13 @@ export default function ConnEditor({
         </Field>
       </Section>
       <div className="h-2" />
-      <KeysDialog open={manageKeys} onClose={() => setManageKeys(false)} onAdded={(k) => set("keyId", k.id)} />
+      <KeysDialog
+        open={!!manage}
+        tab={manage ?? "keys"}
+        onClose={() => setManage(null)}
+        onAdded={(k) => set("keyId", k.id)}
+        onAccountAdded={(a) => accountAllows(a, f.kind) && setAccount(a.id, a)}
+      />
     </Dialog>
   );
 }

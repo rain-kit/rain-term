@@ -27,7 +27,7 @@ pub trait SecretBackend: Send + Sync {
     fn delete(&self, conn_id: &str, kind: &str) -> Result<(), String>;
 }
 
-/// 按连接 ID 保存连接密码，按密钥 ID 保存密钥管理的私钥和私钥密码。
+/// 按连接 ID 保存连接密码，按密钥 ID 保存密钥管理的私钥和私钥密码，按登录用户 ID 保存用户的密码。
 pub struct Secrets {
     backend: Box<dyn SecretBackend>,
 }

@@ -9,6 +9,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use super::accounts::AccountService;
 use super::hostkey::HostKeyService;
 use super::keys::KeyService;
 use crate::config::ToolsConfig;
@@ -20,8 +21,9 @@ use crate::error::{self, ApiError, ApiResult};
 use crate::events::{self, EventSink};
 use crate::i18n::{Msg, pick};
 use crate::model::{
-    AuthType, ConnParams, ConnView, Connection, DEFAULT_RDP_HEIGHT, DEFAULT_RDP_WIDTH, RdpParams,
-    SaveConnReq, SshParams, TestResult, validate_refs,
+    Account, AccountView, AuthType, ConnParams, ConnView, Connection, DEFAULT_RDP_HEIGHT,
+    DEFAULT_RDP_WIDTH, RdpParams, SaveAccountReq, SaveConnReq, SshParams, TestResult,
+    validate_refs,
 };
 use crate::secrets::{self, Secrets};
 use crate::store::{ConnStore, StoreError};
@@ -64,12 +66,13 @@ pub struct ConnService {
     store: ConnStore,
     secrets: Arc<Secrets>,
     keys: Arc<KeyService>,
+    accounts: Arc<AccountService>,
     host_keys: Arc<HostKeyService>,
     events: Arc<dyn EventSink>,
 }
 
 impl ConnService {
-    /// 密钥管理和连接共用 secrets，列表保存在 connections.json 旁边的 keys.json。
+    /// 密钥管理、登录用户和连接共用 secrets，列表保存在 connections.json 旁边的 keys.json、accounts.json。
     pub fn new(
         store: ConnStore,
         secrets: Secrets,
@@ -82,10 +85,17 @@ impl ConnService {
             secrets.clone(),
             events.clone(),
         ));
+        let accounts = Arc::new(AccountService::new(
+            store.dir().join("accounts.json"),
+            secrets.clone(),
+            keys.clone(),
+            events.clone(),
+        ));
         ConnService {
             store,
             secrets,
             keys,
+            accounts,
             host_keys,
             events,
         }
@@ -93,6 +103,10 @@ impl ConnService {
 
     pub fn keys(&self) -> &Arc<KeyService> {
         &self.keys
+    }
+
+    pub fn accounts(&self) -> &Arc<AccountService> {
+        &self.accounts
     }
 
     fn changed(&self) {
@@ -105,7 +119,8 @@ impl ConnService {
             .store
             .list()
             .inspect_err(|e| error!(err = %e, "读取连接列表失败"))?;
-        Ok(list.into_iter().map(|c| self.view(c)).collect())
+        let accounts = self.accounts.list().unwrap_or_default();
+        Ok(list.into_iter().map(|c| self.view_with(c, &accounts)).collect())
     }
 
     pub fn get(&self, id: &str) -> ApiResult<ConnView> {
@@ -123,7 +138,36 @@ impl ConnService {
         self.secrets
             .fill(c)
             .map_err(|e| error::SECRET_READ_FAILED.cause(e))?;
+        self.fill_account(c, true)?;
         self.fill_key(c)
+    }
+
+    /// 选了登录用户时填入它的用户名和认证方式，with_password 时连同密码一起填入。
+    fn fill_account(&self, c: &mut Connection, with_password: bool) -> ApiResult<()> {
+        let Some(id) = c.account_ref().map(str::to_string) else {
+            return Ok(());
+        };
+        let a = match self.accounts.get(&id) {
+            Ok(a) => a,
+            Err(e) if e.code == error::ACCOUNT_NOT_FOUND.0 => {
+                return Err(error::CONN_INVALID.msg(msg!(
+                    "err.conn.accountNotFound",
+                    "所选用户不存在，可能已被删除"
+                )));
+            }
+            Err(e) => return Err(e),
+        };
+        if !a.scope.allows(c.kind()) {
+            return Err(error::CONN_INVALID.msg(msg!(
+                "err.conn.accountKind",
+                "所选用户不能用于这种连接"
+            )));
+        }
+        c.apply_account(&a);
+        if with_password {
+            *c.password_mut() = self.accounts.password(&id)?;
+        }
+        Ok(())
     }
 
     /// 填入所选密钥的私钥内容和私钥密码。
@@ -139,12 +183,12 @@ impl ConnService {
         Ok(())
     }
 
-    /// 私钥认证要选择密钥管理里已有的密钥。
+    /// 私钥认证要选择密钥管理里已有的密钥。选了登录用户时密钥由登录用户检查。
     fn check_key(&self, c: &Connection) -> ApiResult<()> {
         let ConnParams::Ssh(p) = &c.params else {
             return Ok(());
         };
-        if p.auth != AuthType::Key {
+        if p.auth != AuthType::Key || !p.account_id.is_empty() {
             return Ok(());
         }
         if p.key_id.is_empty() {
@@ -160,7 +204,7 @@ impl ConnService {
         }
     }
 
-    /// 删除密钥。还有连接在用时拒绝删除，并返回这些连接的名称。
+    /// 删除密钥。还有连接或登录用户在用时拒绝删除，并返回它们的名称。
     pub fn delete_key(&self, id: &str) -> ApiResult<()> {
         let users: Vec<String> = self
             .store
@@ -170,14 +214,73 @@ impl ConnService {
             .map(|c| c.name)
             .collect();
         if !users.is_empty() {
-            let names = users.join(pick(["、", "、", ", "]));
+            let names = join_names(&users);
             return Err(error::KEY_IN_USE.msg(msg!(
                 "err.keyInUse",
                 "以下连接正在使用这个密钥，请先修改这些连接：{names}",
                 names
             )));
         }
+        let accounts: Vec<String> = self
+            .accounts
+            .list()?
+            .into_iter()
+            .filter(|a| a.auth == AuthType::Key && a.key_id == id)
+            .map(|a| a.name)
+            .collect();
+        if !accounts.is_empty() {
+            let names = join_names(&accounts);
+            return Err(error::KEY_IN_USE.msg(msg!(
+                "err.keyInUseByAccount",
+                "以下用户正在使用这个密钥，请先修改这些用户：{names}",
+                names
+            )));
+        }
         self.keys.remove(id)
+    }
+
+    /// 保存登录用户。修改连接类型或认证方式后，正在使用它的连接不能再用时拒绝保存。
+    pub fn save_account(&self, mut req: SaveAccountReq) -> ApiResult<AccountView> {
+        self.accounts.prepare(&mut req.account)?;
+        let a = &req.account;
+        if !a.id.is_empty() {
+            let users: Vec<String> = self
+                .store
+                .list()?
+                .into_iter()
+                .filter(|c| c.account_ref() == Some(a.id.as_str()) && !a.scope.allows(c.kind()))
+                .map(|c| c.name)
+                .collect();
+            if !users.is_empty() {
+                let names = join_names(&users);
+                return Err(error::ACCOUNT_IN_USE.msg(msg!(
+                    "err.accountKindInUse",
+                    "以下连接正在使用这个用户，不能改为只用于其他类型的连接：{names}",
+                    names
+                )));
+            }
+        }
+        self.accounts.save(req)
+    }
+
+    /// 删除登录用户。还有连接在用时拒绝删除，并返回这些连接的名称。
+    pub fn delete_account(&self, id: &str) -> ApiResult<()> {
+        let users: Vec<String> = self
+            .store
+            .list()?
+            .into_iter()
+            .filter(|c| c.account_ref() == Some(id))
+            .map(|c| c.name)
+            .collect();
+        if !users.is_empty() {
+            let names = join_names(&users);
+            return Err(error::ACCOUNT_IN_USE.msg(msg!(
+                "err.accountInUse",
+                "以下连接正在使用这个用户，请先修改这些连接：{names}",
+                names
+            )));
+        }
+        self.accounts.remove(id)
     }
 
     /// 读取私钥文件导入密钥管理，返回密钥 ID；同一个私钥已经导入过时返回已有的。
@@ -214,7 +317,32 @@ impl ConnService {
         }
     }
 
-    fn view(&self, mut c: Connection) -> ConnView {
+    /// 导入的连接引用了这台电脑上没有（或不能用于这种连接）的登录用户时去掉引用，保留用户名，之后编辑连接重新选择。
+    fn unlink_missing_account(&self, c: &mut Connection) {
+        let Some(id) = c.account_ref() else { return };
+        let usable = self
+            .accounts
+            .get(id)
+            .is_ok_and(|a| a.scope.allows(c.kind()));
+        if !usable {
+            warn!(conn = %c.name, "导入的连接引用的登录用户不在这台电脑上，需要重新选择");
+            c.account_ref_mut().clear();
+        }
+    }
+
+    fn view(&self, c: Connection) -> ConnView {
+        let accounts = self.accounts.list().unwrap_or_default();
+        self.view_with(c, &accounts)
+    }
+
+    /// 选了登录用户时显示登录用户当前的用户名。
+    fn view_with(&self, mut c: Connection, accounts: &[Account]) -> ConnView {
+        if let Some(a) = c
+            .account_ref()
+            .and_then(|id| accounts.iter().find(|a| a.id == id))
+        {
+            c.apply_account(a);
+        }
         let has_password = self.secrets.has(&c.id, secrets::PASSWORD);
         c.clear_secrets();
         ConnView { conn: c, has_password }
@@ -224,6 +352,7 @@ impl ConnService {
     pub fn save(&self, req: SaveConnReq) -> ApiResult<ConnView> {
         let mut c = req.conn;
         let is_new = c.id.is_empty();
+        self.fill_account(&mut c, false)?;
         c.normalize();
         c.validate().map_err(|e| error::CONN_INVALID.msg(e))?;
         self.check_key(&c)?;
@@ -282,6 +411,8 @@ impl ConnService {
         c.id = new_id();
         c.created_at = Some(Local::now());
         c.name.push_str(pick([" 副本", " 副本", " Copy"]));
+        // 登录用户的密码和密钥不复制到连接上。
+        c.normalize();
         self.store_secrets(&mut c, true, false)?;
         let copy = c.clone();
         self.store.modify(|list| {
@@ -310,7 +441,7 @@ impl ConnService {
                 .map(|c| c.name.as_str())
                 .collect();
             if !users.is_empty() {
-                let names = users.join(pick(["、", "、", ", "]));
+                let names = join_names(&users);
                 return Err(error::CONN_IN_USE.msg(msg!(
                     "err.connInUse",
                     "以下连接正在使用它，请先修改这些连接：{names}",
@@ -469,6 +600,7 @@ impl ConnService {
                 r.clear();
             }
             self.unlink_missing_key(c);
+            self.unlink_missing_account(c);
             if !keep_secrets {
                 c.clear_secrets();
             }
@@ -506,9 +638,11 @@ impl ConnService {
     /// 用编辑器里尚未保存的内容测试连接；密码留空时使用已保存的密码。
     pub async fn test(&self, req: SaveConnReq) -> ApiResult<TestResult> {
         let mut c = req.conn;
+        self.fill_account(&mut c, false)?;
         c.normalize();
         c.validate().map_err(|e| error::CONN_INVALID.msg(e))?;
         self.check_key(&c)?;
+        self.fill_account(&mut c, true)?;
         if !c.id.is_empty() {
             let id = c.id.clone();
             for (kind, value) in c.secrets_mut() {
@@ -632,6 +766,14 @@ impl ConnService {
     }
 }
 
+fn join_names<S: AsRef<str>>(names: &[S]) -> String {
+    names
+        .iter()
+        .map(AsRef::as_ref)
+        .collect::<Vec<_>>()
+        .join(pick(["、", "、", ", "]))
+}
+
 /// MobaXterm 的会话文件不是 UTF-8 时按 Windows-1252 读。
 fn read_moba_text(path: &Path) -> ApiResult<String> {
     let bytes = std::fs::read(path).map_err(|e| error::IMPORT_FAILED.cause(e))?;
@@ -676,8 +818,8 @@ mod tests {
     use crate::core::rdp::cert::CertStore;
     use crate::core::ssh::keyfile::{self, KeyKind};
     use crate::core::ssh::known_hosts::HostKeyStore;
-    use crate::model::tests::{rdp_of, ssh, ssh_of, ssh_of_mut};
-    use crate::model::{AuthType, ConnKind, KeyImportReq};
+    use crate::model::tests::{rdp, rdp_of, ssh, ssh_of, ssh_of_mut};
+    use crate::model::{AccountScope, AuthType, ConnKind, KeyImportReq};
     use crate::secrets::MemoryBackend;
     use base64::Engine;
 
@@ -846,6 +988,143 @@ mod tests {
         f.svc.delete(&v.conn.id).unwrap();
         f.svc.delete_key(&key.id).unwrap();
         assert!(f.svc.keys.list().unwrap().is_empty());
+    }
+
+    fn save_account(f: &Fixture, a: Account) -> AccountView {
+        f.svc
+            .save_account(SaveAccountReq {
+                account: a,
+                ..Default::default()
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn conn_uses_account_credentials() {
+        let f = fixture();
+        let ops = save_account(
+            &f,
+            Account {
+                user: "ops".into(),
+                password: "apw".into(),
+                scope: AccountScope::Ssh,
+                ..Default::default()
+            },
+        )
+        .account;
+        let mut c = ssh("a", "");
+        c.id.clear();
+        let p = ssh_of_mut(&mut c);
+        p.account_id = ops.id.clone();
+        p.user.clear();
+        p.password = "own".into();
+        let v = f
+            .svc
+            .save(SaveConnReq {
+                conn: c,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(ssh_of(&v.conn).user, "ops", "用户名来自登录用户");
+        assert!(!v.has_password, "选了登录用户时连接不保存自己的密码");
+        let got = f.svc.resolve(&v.conn.id).unwrap();
+        assert_eq!((ssh_of(&got).user.as_str(), ssh_of(&got).password.as_str()), ("ops", "apw"));
+
+        // 复制时不把登录用户的密码写进连接。
+        f.svc.duplicate(&v.conn.id).unwrap();
+        let raw = std::fs::read_to_string(f.dir.join("connections.json")).unwrap();
+        assert!(!raw.contains("apw"));
+
+        // 只能用于 SSH 的用户不能给远程桌面用，也不能把在用的用户改成只用于远程桌面。
+        let mut r = rdp("r", "");
+        r.id.clear();
+        *r.account_ref_mut() = ops.id.clone();
+        let err = f
+            .svc
+            .save(SaveConnReq {
+                conn: r,
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert_eq!(err.msg.i18n, "err.conn.accountKind");
+        let mut changed = ops.clone();
+        changed.scope = AccountScope::Rdp;
+        let err = f
+            .svc
+            .save_account(SaveAccountReq {
+                account: changed,
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert_eq!((err.code, err.msg.i18n), (error::ACCOUNT_IN_USE.0, "err.accountKindInUse"));
+
+        // 改登录用户的用户名，连接跟着变。
+        let mut renamed = ops.clone();
+        renamed.user = "ops2".into();
+        save_account(&f, renamed);
+        assert_eq!(ssh_of(&f.svc.get(&v.conn.id).unwrap().conn).user, "ops2");
+        assert_eq!(ssh_of(&f.svc.resolve(&v.conn.id).unwrap()).password, "apw", "密码留空表示不修改");
+
+        let err = f.svc.delete_account(&ops.id).unwrap_err();
+        assert_eq!(err.code, error::ACCOUNT_IN_USE.0);
+        for v in f.svc.list().unwrap() {
+            f.svc.delete(&v.conn.id).unwrap();
+        }
+        f.svc.delete_account(&ops.id).unwrap();
+        assert!(f.svc.accounts.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn account_with_key() {
+        let f = fixture();
+        let text = keyfile::generate(KeyKind::Ed25519, "", "").unwrap();
+        let key = f
+            .svc
+            .keys
+            .import(KeyImportReq {
+                content: text.clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let deploy = save_account(
+            &f,
+            Account {
+                user: "deploy".into(),
+                auth: AuthType::Key,
+                key_id: key.id.clone(),
+                ..Default::default()
+            },
+        )
+        .account;
+        let mut c = ssh("k", "");
+        c.id.clear();
+        ssh_of_mut(&mut c).account_id = deploy.id.clone();
+        let v = f
+            .svc
+            .save(SaveConnReq {
+                conn: c,
+                ..Default::default()
+            })
+            .unwrap();
+        let got = f.svc.resolve(&v.conn.id).unwrap();
+        let p = ssh_of(&got);
+        assert_eq!(p.auth, AuthType::Key);
+        assert_eq!(p.key_data.trim(), text.trim());
+        assert_eq!(f.svc.store.get(&v.conn.id).unwrap().key_ref(), None, "密钥跟着登录用户保存");
+
+        let err = f.svc.delete_key(&key.id).unwrap_err();
+        assert_eq!((err.code, err.msg.i18n), (error::KEY_IN_USE.0, "err.keyInUseByAccount"));
+    }
+
+    #[test]
+    fn imported_conn_drops_unknown_account() {
+        let f = fixture();
+        f.svc
+            .import(r#"[{"kind":"rdp","host":"h","user":"u","name":"far","accountId":"elsewhere"}]"#)
+            .unwrap();
+        let far = f.svc.list().unwrap().into_iter().next().unwrap();
+        assert_eq!(far.conn.account_ref(), None);
+        assert_eq!(rdp_of(&far.conn).user, "u", "保留用户名");
     }
 
     #[test]

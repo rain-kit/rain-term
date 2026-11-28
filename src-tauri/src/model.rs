@@ -61,7 +61,11 @@ impl SftpSudo {
 pub struct SshParams {
     pub host: String,
     pub port: i32,
+    /// 选了登录用户时是用户名的快照，登录时以 [`Account`] 为准。
     pub user: String,
+    /// 登录用户，见 [`Account`]。设置后用户名、认证方式、密码和私钥都来自登录用户。
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub account_id: String,
     pub auth: AuthType,
     /// 私钥认证使用的密钥，见 [`SshKey`]。
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -95,6 +99,7 @@ impl Default for SshParams {
             host: String::new(),
             port: DEFAULT_SSH_PORT,
             user: String::new(),
+            account_id: String::new(),
             auth: AuthType::Password,
             key_id: String::new(),
             key_data: String::new(),
@@ -123,7 +128,11 @@ pub enum RdpResolution {
 pub struct RdpParams {
     pub host: String,
     pub port: i32,
+    /// 选了登录用户时是用户名的快照，登录时以 [`Account`] 为准。
     pub user: String,
+    /// 登录用户，见 [`Account`]。设置后用户名和密码都来自登录用户。
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub account_id: String,
     /// 通过这个 SSH 连接转发到远程桌面。
     #[serde(skip_serializing_if = "String::is_empty")]
     pub jump_id: String,
@@ -142,6 +151,7 @@ impl Default for RdpParams {
             host: String::new(),
             port: DEFAULT_RDP_PORT,
             user: String::new(),
+            account_id: String::new(),
             jump_id: String::new(),
             resolution: RdpResolution::Fit,
             width: DEFAULT_RDP_WIDTH,
@@ -234,29 +244,71 @@ impl Connection {
         }
     }
 
+    /// 登录用户的 ID，没有选择时返回 None。
+    pub fn account_ref(&self) -> Option<&str> {
+        let id = match &self.params {
+            ConnParams::Ssh(p) => &p.account_id,
+            ConnParams::Rdp(p) => &p.account_id,
+        };
+        (!id.is_empty()).then_some(id.as_str())
+    }
+
+    pub fn account_ref_mut(&mut self) -> &mut String {
+        match &mut self.params {
+            ConnParams::Ssh(p) => &mut p.account_id,
+            ConnParams::Rdp(p) => &mut p.account_id,
+        }
+    }
+
+    /// 填入登录用户的用户名和认证方式（不含密码）。
+    pub fn apply_account(&mut self, a: &Account) {
+        match &mut self.params {
+            ConnParams::Ssh(p) => {
+                p.user = a.user.clone();
+                p.auth = a.auth;
+                p.key_id = a.key_id.clone();
+            }
+            ConnParams::Rdp(p) => p.user = a.user.clone(),
+        }
+    }
+
+    pub fn password_mut(&mut self) -> &mut String {
+        match &mut self.params {
+            ConnParams::Ssh(p) => &mut p.password,
+            ConnParams::Rdp(p) => &mut p.password,
+        }
+    }
+
     /// 去掉首尾空白、填充默认端口和名称，清掉当前认证方式用不到的字段。
+    /// 选了登录用户时不保存密钥和密码，登录时从登录用户读取。
     pub fn normalize(&mut self) {
         trim(&mut self.name);
         trim(&mut self.group);
         trim(&mut self.color);
         match &mut self.params {
             ConnParams::Ssh(p) => {
-                for s in [&mut p.host, &mut p.user, &mut p.key_id, &mut p.jump_id, &mut p.init_dir] {
+                for s in [&mut p.host, &mut p.user, &mut p.account_id, &mut p.key_id, &mut p.jump_id, &mut p.init_dir] {
                     trim(s);
                 }
                 if p.port == 0 {
                     p.port = DEFAULT_SSH_PORT;
                 }
-                if p.auth != AuthType::Key {
+                if p.auth != AuthType::Key || !p.account_id.is_empty() {
                     p.key_id.clear();
+                }
+                if !p.account_id.is_empty() {
+                    p.password.clear();
                 }
             }
             ConnParams::Rdp(p) => {
-                for s in [&mut p.host, &mut p.user, &mut p.jump_id] {
+                for s in [&mut p.host, &mut p.user, &mut p.account_id, &mut p.jump_id] {
                     trim(s);
                 }
                 if p.port == 0 {
                     p.port = DEFAULT_RDP_PORT;
+                }
+                if !p.account_id.is_empty() {
+                    p.password.clear();
                 }
                 if p.width == 0 || p.height == 0 {
                     p.width = DEFAULT_RDP_WIDTH;
@@ -352,9 +404,13 @@ impl Connection {
         }
     }
 
-    /// 密码类字段：(凭据种类, 值)。只包含当前类型和认证方式用得到的种类；私钥密码跟着密钥保存。
+    /// 密码类字段：(凭据种类, 值)。只包含当前类型和认证方式用得到的种类；私钥密码跟着密钥保存，
+    /// 选了登录用户时密码跟着登录用户保存。
     pub fn secrets_mut(&mut self) -> Vec<(&'static str, &mut String)> {
         use crate::secrets::PASSWORD;
+        if self.account_ref().is_some() {
+            return vec![];
+        }
         match &mut self.params {
             ConnParams::Ssh(p) => match p.auth {
                 AuthType::Password => vec![(PASSWORD, &mut p.password)],
@@ -500,6 +556,96 @@ pub struct KeyGenerateReq {
     pub key_type: KeyType,
     pub bits: Option<u32>,
     pub passphrase: String,
+}
+
+/// 登录用户能用于哪些连接。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountScope {
+    #[default]
+    All,
+    Ssh,
+    Rdp,
+}
+
+impl AccountScope {
+    pub fn allows(self, kind: ConnKind) -> bool {
+        matches!(
+            (self, kind),
+            (AccountScope::All, _) | (AccountScope::Ssh, ConnKind::Ssh) | (AccountScope::Rdp, ConnKind::Rdp)
+        )
+    }
+}
+
+/// 登录用户：保存一份用户名和密码或私钥，多个连接共用，保存在 accounts.json；
+/// 密码由 secrets 加密存进 secrets.json，私钥引用密钥管理里的 [`SshKey`]。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Account {
+    pub id: String,
+    pub name: String,
+    pub user: String,
+    /// 只支持密码和私钥。
+    pub auth: AuthType,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub key_id: String,
+    /// 私钥只能用于 SSH。
+    pub scope: AccountScope,
+    pub created_at: Option<DateTime<Local>>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub password: String,
+}
+
+impl Account {
+    /// 去掉首尾空白，名称为空时用用户名；私钥认证只能用于 SSH，不保存密码。
+    pub fn normalize(&mut self) {
+        for s in [&mut self.name, &mut self.user, &mut self.key_id] {
+            trim(s);
+        }
+        if self.auth == AuthType::Key {
+            self.scope = AccountScope::Ssh;
+            self.password.clear();
+        } else {
+            self.key_id.clear();
+        }
+        if self.name.is_empty() {
+            self.name = self.user.clone();
+        }
+    }
+
+    /// 密钥是否存在由调用方检查。
+    pub fn validate(&self) -> Result<(), Msg> {
+        if self.user.is_empty() {
+            return Err(msg!("err.conn.userRequired", "用户名不能为空"));
+        }
+        match self.auth {
+            AuthType::Password => Ok(()),
+            AuthType::Key if self.key_id.is_empty() => {
+                Err(msg!("err.conn.keyRequired", "私钥认证需要选择密钥"))
+            }
+            AuthType::Key => Ok(()),
+            AuthType::Agent => Err(msg!("err.account.authInvalid", "登录用户只支持密码和私钥认证")),
+        }
+    }
+}
+
+/// 返回给前端的登录用户：不包含密码，只告诉前端是否已保存。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountView {
+    #[serde(flatten)]
+    pub account: Account,
+    pub has_password: bool,
+}
+
+/// 新建或修改登录用户。编辑时密码留空表示保持原值。
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveAccountReq {
+    #[serde(flatten)]
+    pub account: Account,
+    #[serde(default)]
+    pub clear_password: bool,
 }
 
 #[cfg(test)]

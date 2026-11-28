@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { connApi, errorMessage, events, hostKeyApi, keyApi, settingsApi, updateApi } from "./api";
+import { accountApi, connApi, errorMessage, events, hostKeyApi, keyApi, settingsApi, updateApi } from "./api";
 import { setLanguage, t } from "./i18n";
-import type { ConnView, HostKeyPrompt, Settings, SettingsInput, SshKey, UpdateInfo } from "./types";
+import type { AccountView, ConnView, HostKeyPrompt, Settings, SettingsInput, SshKey, UpdateInfo } from "./types";
 
 // ---------- 提示 ----------
 
@@ -205,6 +205,34 @@ function KeysProvider({ children }: { children: ReactNode }) {
   return <KeysContext.Provider value={value}>{children}</KeysContext.Provider>;
 }
 
+// ---------- 登录用户 ----------
+
+interface AccountsCtx {
+  accounts: AccountView[];
+  refresh: () => Promise<void>;
+}
+
+const AccountsContext = createContext<AccountsCtx>(null!);
+export const useAccounts = () => useContext(AccountsContext);
+
+function AccountsProvider({ children }: { children: ReactNode }) {
+  const toast = useToast();
+  const [accounts, setAccounts] = useState<AccountView[]>([]);
+  const refresh = useCallback(async () => {
+    try {
+      setAccounts(await accountApi.list());
+    } catch (e) {
+      toast.error(e);
+    }
+  }, []);
+  useEffect(() => {
+    refresh();
+    return events.onAccountsChanged(refresh);
+  }, [refresh]);
+  const value = useMemo(() => ({ accounts, refresh }), [accounts, refresh]);
+  return <AccountsContext.Provider value={value}>{children}</AccountsContext.Provider>;
+}
+
 // ---------- 主机指纹确认 ----------
 
 interface HostKeyCtx {
@@ -366,9 +394,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       <SettingsProvider>
         <ConnsProvider>
           <KeysProvider>
-            <UpdateProvider>
-              <HostKeyProvider>{children}</HostKeyProvider>
-            </UpdateProvider>
+            <AccountsProvider>
+              <UpdateProvider>
+                <HostKeyProvider>{children}</HostKeyProvider>
+              </UpdateProvider>
+            </AccountsProvider>
           </KeysProvider>
         </ConnsProvider>
       </SettingsProvider>

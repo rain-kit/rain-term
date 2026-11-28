@@ -127,6 +127,12 @@ pub const KEY_IN_USE: Code = Code(700004, "err.keyInUse", "密钥正被连接使
 pub const KEY_FILE_IO: Code = Code(700005, "err.keyFileIo", "读写 keys.json 失败");
 pub const KEY_GENERATE_FAILED: Code = Code(700006, "err.keyGenerateFailed", "生成密钥失败");
 
+// -------------------- 登录用户 800000 -------------------- //
+pub const ACCOUNT_NOT_FOUND: Code = Code(800001, "err.accountNotFound", "用户不存在，可能已被删除");
+pub const ACCOUNT_INVALID: Code = Code(800002, "err.accountInvalid", "用户配置无效");
+pub const ACCOUNT_IN_USE: Code = Code(800003, "err.accountInUse", "用户正被连接使用");
+pub const ACCOUNT_FILE_IO: Code = Code(800004, "err.accountFileIo", "读写 accounts.json 失败");
+
 // -------------------- 远程桌面 600000 -------------------- //
 pub const RDP_CONNECT_FAILED: Code = Code(600001, "err.rdpConnectFailed", "远程桌面连接失败");
 pub const RDP_NOT_FOUND: Code = Code(600002, "err.rdpNotFound", "远程桌面会话不存在或已关闭");

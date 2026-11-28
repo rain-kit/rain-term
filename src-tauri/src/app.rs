@@ -9,6 +9,7 @@ use crate::core::rdp::cert::CertStore;
 use crate::core::ssh::known_hosts::HostKeyStore;
 use crate::events::{self, EventSink};
 use crate::secrets::{FileBackend, Secrets};
+use crate::service::accounts::AccountService;
 use crate::service::conn::ConnService;
 use crate::service::hostkey::HostKeyService;
 use crate::service::keys::KeyService;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
     pub conns: Arc<ConnService>,
     pub keys: Arc<KeyService>,
+    pub accounts: Arc<AccountService>,
     pub host_keys: Arc<HostKeyService>,
     pub pool: Arc<ClientPool>,
     pub sessions: Arc<SessionService>,
@@ -87,6 +89,7 @@ pub fn setup(
         sink,
     ));
     let keys = conns.keys().clone();
+    let accounts = conns.accounts().clone();
     let pool = ClientPool::new(conns.clone());
     let sessions = SessionService::new(conns.clone(), pool.clone());
     let sftp = SftpService::new(conns.clone(), pool.clone());
@@ -99,6 +102,7 @@ pub fn setup(
         config: Mutex::new(cfg),
         conns,
         keys,
+        accounts,
         host_keys,
         pool,
         sessions,

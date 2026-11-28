@@ -66,7 +66,7 @@ function DialogButton({
   );
 }
 
-/** 窗口顶栏，同时作为拖动区域：左侧是名称（点击回到终端）、密钥和工具，右侧是设置（再点一次回到终端）和 Windows 的窗口按钮。 */
+/** 窗口顶栏，同时作为拖动区域：左侧是名称（点击回到终端）、密钥/用户和工具，右侧是设置（再点一次回到终端）和 Windows 的窗口按钮。 */
 export default function TopBar({ view, onChange }: { view: View; onChange: (v: View) => void }) {
   const { t } = useI18n();
   const update = useUpdate().info;
