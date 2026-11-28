@@ -51,6 +51,7 @@ pub fn run() {
             commands::conn::conn_move,
             commands::conn::conn_test,
             commands::conn::conn_export,
+            commands::conn::conn_import_pick,
             commands::conn::conn_import,
             commands::conn::conn_import_dir,
             commands::conn::conn_import_moba,

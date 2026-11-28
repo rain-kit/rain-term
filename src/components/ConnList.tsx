@@ -7,6 +7,7 @@ import { useI18n } from "../lib/i18n";
 import { useConns, useToast } from "../lib/store";
 import type { MessageKey } from "../locales/zh-CN";
 import type { ConnView } from "../lib/types";
+import BackupDialog, { type BackupTask } from "./BackupDialog";
 import ConnEditor from "./ConnEditor";
 import KindIcon from "./KindIcon";
 import { ResizeHandle, useStoredSize, type SizeSpec } from "./Resizer";
@@ -70,6 +71,7 @@ export default function ConnList({ title, emptyDesc, onOpen }: Props) {
   const [groupName, setGroupName] = useState("");
   const [groupError, setGroupError] = useState("");
   const [otherOpen, setOtherOpen] = useState(false);
+  const [backup, setBackup] = useState<BackupTask | null>(null);
   const [width, setWidth, commitWidth] = useStoredSize(WIDTH);
 
   const filtered = useMemo(() => {
@@ -178,18 +180,19 @@ export default function ConnList({ title, emptyDesc, onOpen }: Props) {
     else setDeleting(c);
   };
 
-  const importConns = (kind: "file" | OtherImport = "file") =>
+  const importOthers = (kind: OtherImport) =>
     run(async () => {
-      const n =
-        kind === "finalshell" ? await connApi.importFinalShellDir() : kind === "moba" ? await connApi.importMobaXterm() : await connApi.importFrom();
+      const n = kind === "finalshell" ? await connApi.importFinalShellDir() : await connApi.importMobaXterm();
       if (n !== null) toast.success(t("conn.imported", { count: n }));
     });
 
-  const exportConns = (ids: string[] = []) =>
+  const importBackup = () =>
     run(async () => {
-      const r = await connApi.exportTo(ids);
-      if (r) toast.success(t("conn.exported", { count: r.count, path: r.path }));
+      const path = await connApi.pickImport();
+      if (path) setBackup({ mode: "import", path });
     });
+
+  const exportConns = (ids: string[] = []) => setBackup({ mode: "export", ids });
 
   const itemMenu = (c: ConnView): MenuItem[] => [
     { label: t("common.open"), icon: <Play size={14} />, onClick: () => onOpen(c) },
@@ -358,8 +361,8 @@ export default function ConnList({ title, emptyDesc, onOpen }: Props) {
         />
         <Menu
           items={[
-            { label: t("conn.exportAll"), icon: <Upload size={14} />, disabled: conns.length === 0, onClick: () => exportConns() },
-            { label: t("conn.import"), icon: <Download size={14} />, onClick: () => importConns() },
+            { label: t("conn.exportAll"), icon: <Upload size={14} />, onClick: () => exportConns() },
+            { label: t("conn.import"), icon: <Download size={14} />, onClick: importBackup },
             { label: t("conn.importOthers"), icon: <Import size={14} />, onClick: () => setOtherOpen(true) },
           ]}
           trigger={(open) => (
@@ -428,6 +431,8 @@ export default function ConnList({ title, emptyDesc, onOpen }: Props) {
 
       <ConnEditor open={editor.open} conn={editor.conn} group={editor.group} onClose={() => setEditor((s) => ({ ...s, open: false }))} />
 
+      <BackupDialog task={backup} onClose={() => setBackup(null)} />
+
       <Dialog open={otherOpen} onClose={() => setOtherOpen(false)} title={t("conn.importOthers")} width="max-w-sm">
         <p className="mb-2 text-sm text-muted">{t("conn.importOthersHint")}</p>
         <div className="mb-2 flex flex-col gap-1">
@@ -437,7 +442,7 @@ export default function ConnList({ title, emptyDesc, onOpen }: Props) {
               className="flex items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-subtle"
               onClick={() => {
                 setOtherOpen(false);
-                importConns(src.kind);
+                importOthers(src.kind);
               }}
             >
               <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-subtle text-muted">{src.icon}</span>

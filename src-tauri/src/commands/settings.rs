@@ -8,6 +8,7 @@ use crate::config::{self, AppConfig, TerminalConfig, ToolsConfig};
 use crate::error::{self, ApiResult};
 use crate::events;
 use crate::i18n;
+use crate::service::conn::Settings;
 use crate::{tray, window};
 
 type S<'a> = State<'a, AppState>;
@@ -79,16 +80,32 @@ pub async fn settings_save(
     Ok(settings_view(&app, &s))
 }
 
-/// 保存导入文件里带的工具配置，并通知前端重新读取设置。
-pub(super) fn import_tools(app: &AppHandle, s: &AppState, tools: ToolsConfig) -> ApiResult<()> {
-    let mut cfg: AppConfig = s.config.lock().unwrap().clone();
-    if cfg.tools == tools {
+/// 保存导入文件里带的工具配置和系统设置（没有的保持不变），并通知前端重新读取设置。
+pub(super) fn import_config(
+    app: &AppHandle,
+    s: &AppState,
+    tools: Option<ToolsConfig>,
+    settings: Option<Settings>,
+) -> ApiResult<()> {
+    let old: AppConfig = s.config.lock().unwrap().clone();
+    let mut cfg = old.clone();
+    if let Some(tools) = tools {
+        cfg.tools = tools;
+    }
+    if let Some(settings) = settings {
+        cfg.ui = settings.ui;
+        cfg.terminal = settings.terminal;
+    }
+    if cfg == old {
         return Ok(());
     }
-    cfg.tools = tools;
+    cfg.validate().map_err(|e| error::PARAM_INVALID.msg(e))?;
     config::save(&s.data_dir, &cfg).map_err(|e| error::SETTING_SAVE_FAILED.cause(e))?;
+    window::apply_theme(app, &cfg.ui.theme);
+    i18n::set(&cfg.ui.language);
+    tray::refresh(app);
     *s.config.lock().unwrap() = cfg;
-    info!("已导入工具配置");
+    info!("已导入工具配置和系统设置");
     let _ = app.emit(events::SETTINGS_CHANGED, ());
     Ok(())
 }

@@ -141,9 +141,20 @@ export interface TestResult {
   serverVersion?: string;
 }
 
-export interface ExportResult {
+/** 导出或导入的数量；导入时密钥和用户只算新增的。 */
+export interface BackupCounts {
+  connections: number;
+  keys: number;
+  accounts: number;
+}
+
+export interface ExportResult extends BackupCounts {
   path: string;
-  count: number;
+}
+
+export interface ImportResult extends BackupCounts {
+  /** 文件里带有工具配置或系统设置（导出全部时才有），已经替换。 */
+  settings: boolean;
 }
 
 // ---------- 密钥管理，见 src-tauri/src/service/keys.rs ----------

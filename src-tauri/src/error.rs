@@ -86,6 +86,8 @@ pub const CONN_FILE_IO: Code = Code(100004, "err.connFileIo", "读写 connection
 pub const CONN_IN_USE: Code = Code(100005, "err.connInUse", "连接正被其他连接使用");
 pub const IMPORT_FAILED: Code = Code(100008, "err.importFailed", "导入失败");
 pub const EXPORT_FAILED: Code = Code(100009, "err.exportFailed", "导出失败");
+pub const IMPORT_WRONG_PASSWORD: Code =
+    Code(100010, "err.importWrongPassword", "导出密码不正确");
 
 // -------------------- 设置 200000 -------------------- //
 pub const SETTING_SAVE_FAILED: Code = Code(200001, "err.settingSaveFailed", "保存设置失败");

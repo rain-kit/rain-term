@@ -8,6 +8,7 @@ import type {
   FilePreview,
   HostKeyPrompt,
   I18nMsg,
+  ImportResult,
   KeyGenerateReq,
   KeyImportReq,
   MonitorEvent,
@@ -38,6 +39,7 @@ export interface ApiError extends I18nMsg {
 
 /** 前端要区别处理的错误码，与 src-tauri/src/error.rs 一致。 */
 export const ErrorCode = {
+  importWrongPassword: 100010,
   sftpSudoPasswordRequired: 400004,
   sftpSudoWrongPassword: 400005,
 } as const;
@@ -69,11 +71,13 @@ export const connApi = {
   move: (id: string, group: string, ids: string[]) => invoke<void>("conn_move", { id, group, ids }),
   /** 用编辑器里尚未保存的内容测试连接。 */
   test: (req: SaveConnReq) => invoke<TestResult>("conn_test", { req }),
-  /** 验证电脑密码后返回保存的密码；取消验证时返回 null。 */
-  /** 弹出保存对话框导出，ids 为空时导出全部；取消时返回 null。 */
-  exportTo: (ids: string[] = []) => invoke<ExportResult | null>("conn_export", { ids }),
-  /** 弹出文件选择框导入本应用导出的文件，返回导入的数量；取消时返回 null。 */
-  importFrom: () => invoke<number | null>("conn_import"),
+  /** 弹出保存对话框导出到一个文件，私钥和密码用 password 加密。ids 为空时导出全部连接、密钥、用户、
+   *  工具配置和系统设置；指定连接时只导出这些连接和它们用到的跳板机、密钥、用户。取消时返回 null。 */
+  exportTo: (ids: string[], password: string) => invoke<ExportResult | null>("conn_export", { ids, password }),
+  /** 弹出文件选择框，检查是本应用导出的文件后返回路径；取消时返回 null。 */
+  pickImport: () => invoke<string | null>("conn_import_pick"),
+  /** 用导出密码导入选好的文件；文件里带有工具配置和系统设置时一并替换。 */
+  importFrom: (path: string, password: string) => invoke<ImportResult>("conn_import", { path, password }),
   /** 选择 FinalShell 数据目录并导入。取消时返回 null。 */
   importFinalShellDir: () => invoke<number | null>("conn_import_dir"),
   /** 选择 MobaXterm 会话文件并导入。取消时返回 null。 */

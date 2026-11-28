@@ -177,7 +177,7 @@ export default function KeysDialog({
         width="max-w-2xl"
         footer={
           <>
-            <span className="flex-1 self-center text-xs text-muted">{t(tab === "keys" ? "keys.footerHint" : "accounts.footerHint")}</span>
+            <span className="flex-1 self-center text-xs text-muted">{tab === "accounts" && t("accounts.footerHint")}</span>
             <Button onClick={onClose}>{t("common.close")}</Button>
           </>
         }

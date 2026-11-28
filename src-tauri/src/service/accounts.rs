@@ -1,6 +1,7 @@
 //! 登录用户：用户名和密码或私钥保存一份，多个连接按 ID 引用，改密码时只改一处。
 //! 列表保存在 accounts.json；密码加密存进 secrets.json，私钥引用密钥管理里的密钥。
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -177,6 +178,48 @@ impl AccountService {
         info!(account = %saved.name, new = is_new, "登录用户已保存");
         self.changed();
         Ok(self.view(saved))
+    }
+
+    /// 导入登录用户和各自的密码，密钥 ID 要先换成本机的。返回文件里的 ID 到本机 ID 的对应和新增的数量。
+    /// 名称、用户名、认证方式、连接类型和密钥都相同的用户已经存在时直接使用，不重复添加。
+    pub fn import(&self, list: Vec<(Account, String)>) -> ApiResult<(HashMap<String, String>, usize)> {
+        if list.is_empty() {
+            return Ok((HashMap::new(), 0));
+        }
+        let now = Local::now();
+        let (ids, added) = self.modify(|existing| {
+            let mut ids = HashMap::new();
+            let mut added = 0;
+            for (mut a, password) in list {
+                a.normalize();
+                a.password.clear();
+                let same = existing.iter().find(|x| {
+                    (&x.name, &x.user, x.auth, x.scope, &x.key_id)
+                        == (&a.name, &a.user, a.auth, a.scope, &a.key_id)
+                });
+                if let Some(x) = same {
+                    ids.insert(a.id, x.id.clone());
+                    continue;
+                }
+                let old = std::mem::replace(&mut a.id, new_id());
+                a.created_at = Some(now);
+                if a.auth == AuthType::Password && !password.is_empty() {
+                    self.secrets.set(&a.id, secrets::PASSWORD, &password).map_err(|e| {
+                        error!(account = %a.name, err = %e, "保存用户密码失败");
+                        error::SECRET_STORE_FAILED.cause(e)
+                    })?;
+                }
+                ids.insert(old, a.id.clone());
+                existing.push(a);
+                added += 1;
+            }
+            Ok((ids, added))
+        })?;
+        if added > 0 {
+            info!(count = added, "登录用户已导入");
+            self.changed();
+        }
+        Ok((ids, added))
     }
 
     /// 删除登录用户和它的密码。是否还被连接使用由调用方检查。

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::{AppHandle, State, Wry};
@@ -8,6 +8,7 @@ use crate::app::AppState;
 use crate::error::{self, ApiResult};
 use crate::i18n::pick;
 use crate::model::{ConnView, SaveConnReq, TestResult};
+use crate::service::conn::{ConnService, Counts};
 
 type S<'a> = State<'a, AppState>;
 
@@ -56,55 +57,83 @@ pub async fn conn_test(s: S<'_>, req: SaveConnReq) -> ApiResult<TestResult> {
 #[serde(rename_all = "camelCase")]
 pub struct ExportResult {
     path: String,
-    count: usize,
+    #[serde(flatten)]
+    counts: Counts,
 }
 
-/// 选择保存位置并导出，ids 为空时导出全部。取消时返回 None。
+/// 选择保存位置，把连接、密钥、用户、工具配置和系统设置导出到一个文件，ids 为空时导出全部。
+/// 私钥和密码用 password 加密。取消时返回 None。
 #[tauri::command]
 pub async fn conn_export(
     app: AppHandle,
     s: S<'_>,
     ids: Vec<String>,
+    password: String,
 ) -> ApiResult<Option<ExportResult>> {
-    let tools = s.config.lock().unwrap().tools.clone();
-    let (text, count) = s.conns.export(&ids, &tools)?;
-    let name = format!(
-        "rain-term-connections-{}.json",
-        chrono::Local::now().format("%Y%m%d")
-    );
+    if password.is_empty() {
+        return Err(error::PARAM_INVALID.err());
+    }
+    let name = format!("rain-term-{}.json", chrono::Local::now().format("%Y%m%d"));
     let dlg = app
         .dialog()
         .file()
-        .set_title(pick(["导出连接", "匯出連線", "Export connections"]))
+        .set_title(pick(["导出", "匯出", "Export"]))
         .add_filter("JSON", &["json"])
         .set_file_name(name);
     let Some(path) = choose(dlg, true).await else {
         return Ok(None);
     };
+    let cfg = s.config.lock().unwrap().clone();
+    let conns = s.conns.clone();
+    let (text, counts) = tokio::task::spawn_blocking(move || conns.export(&ids, &cfg, &password))
+        .await
+        .map_err(|e| error::SERVICE_ERROR.cause(e))??;
     crate::util::write_file_atomic(&path, text.as_bytes())
         .map_err(|e| error::EXPORT_FAILED.cause(e))?;
     Ok(Some(ExportResult {
         path: path.display().to_string(),
-        count,
+        counts,
     }))
 }
 
-/// 选择本应用导出的文件并导入，返回导入的数量；取消时返回 None。文件里带的工具配置一并恢复。
+/// 选择本应用导出的文件并检查格式，返回文件路径，之后再询问导出密码；取消时返回 None。
 #[tauri::command]
-pub async fn conn_import(app: AppHandle, s: S<'_>) -> ApiResult<Option<usize>> {
+pub async fn conn_import_pick(app: AppHandle) -> ApiResult<Option<String>> {
     let dlg = app
         .dialog()
         .file()
-        .set_title(pick(["导入连接", "匯入連線", "Import connections"]))
+        .set_title(pick(["导入", "匯入", "Import"]))
         .add_filter("JSON", &["json"]);
     let Some(path) = choose(dlg, false).await else {
         return Ok(None);
     };
-    let r = s.conns.import_file(&path)?;
-    if let Some(tools) = r.tools {
-        super::settings::import_tools(&app, &s, tools)?;
-    }
-    Ok(Some(r.count))
+    ConnService::read_import_file(&path)?;
+    Ok(Some(path.display().to_string()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    #[serde(flatten)]
+    counts: Counts,
+    /// 文件里带有工具配置或系统设置，已经替换。
+    settings: bool,
+}
+
+/// 用导出密码导入 conn_import_pick 选好的文件；文件里带有工具配置和系统设置时一并替换。
+#[tauri::command]
+pub async fn conn_import(app: AppHandle, s: S<'_>, path: String, password: String) -> ApiResult<ImportResult> {
+    let text = ConnService::read_import_file(Path::new(&path))?;
+    let conns = s.conns.clone();
+    let r = tokio::task::spawn_blocking(move || conns.import(&text, &password))
+        .await
+        .map_err(|e| error::SERVICE_ERROR.cause(e))??;
+    let settings = r.tools.is_some() || r.settings.is_some();
+    super::settings::import_config(&app, &s, r.tools, r.settings)?;
+    Ok(ImportResult {
+        counts: r.counts,
+        settings,
+    })
 }
 
 /// 选择 FinalShell 的数据目录（或其中的 conn 目录）并导入。取消时返回 None。

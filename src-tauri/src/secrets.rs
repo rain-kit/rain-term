@@ -217,7 +217,7 @@ impl SecretBackend for FileBackend {
     }
 }
 
-fn random<const N: usize>() -> Result<[u8; N], String> {
+pub(crate) fn random<const N: usize>() -> Result<[u8; N], String> {
     let mut buf = [0u8; N];
     SystemRandom::new()
         .fill(&mut buf)
