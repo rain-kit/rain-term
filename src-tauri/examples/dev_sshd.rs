@@ -9,7 +9,7 @@ use russh::keys::PrivateKey;
 use russh::keys::ssh_key::LineEnding;
 
 fn load_key() -> PrivateKey {
-    let path = std::env::temp_dir().join("rain-dial-dev-sshd.key");
+    let path = std::env::temp_dir().join("rain-term-dev-sshd.key");
     if let Ok(text) = std::fs::read_to_string(&path)
         && let Ok(key) = PrivateKey::from_openssh(&text)
     {

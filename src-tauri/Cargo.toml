@@ -1,17 +1,17 @@
 [package]
-name = "rain-dial"
-version = "1.2.2"
+name = "rain-term"
+version = "1.2.3"
 description = "SSH 客户端"
 license = "MIT"
 edition = "2024"
-default-run = "rain-dial"
+default-run = "rain-term"
 
 [lib]
-name = "rain_dial"
+name = "rain_term"
 path = "src/lib.rs"
 
 [[bin]]
-name = "rain-dial"
+name = "rain-term"
 path = "src/main.rs"
 
 [dependencies]

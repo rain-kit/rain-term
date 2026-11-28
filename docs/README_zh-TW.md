@@ -95,7 +95,7 @@ cd src-tauri
 cargo test
 ```
 
-`cargo test` 還會在 Docker 裡的真實 OpenSSH 伺服器（`src-tauri/tests/docker`）上執行整合測試，需要 Docker Compose v2。本機沒有 Docker 或設定了 `RAIN_DIAL_SKIP_DOCKER` 時略過。
+`cargo test` 還會在 Docker 裡的真實 OpenSSH 伺服器（`src-tauri/tests/docker`）上執行整合測試，需要 Docker Compose v2。本機沒有 Docker 或設定了 `RAIN_TERM_SKIP_DOCKER` 時略過。
 
 想在沒有真實伺服器的情況下試用介面，可以在 `src-tauri` 下執行 `cargo run --example dev_sshd`，它會在 2222 連接埠啟動一個本機測試 SSH 伺服器，使用者 `tester`，密碼 `pa55`。
 

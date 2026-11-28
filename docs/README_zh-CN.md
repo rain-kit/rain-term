@@ -95,7 +95,7 @@ cd src-tauri
 cargo test
 ```
 
-`cargo test` 还会在 Docker 里的真实 OpenSSH 服务器（`src-tauri/tests/docker`）上跑集成测试，需要 Docker Compose v2。本机没有 Docker 或设置了 `RAIN_DIAL_SKIP_DOCKER` 时跳过。
+`cargo test` 还会在 Docker 里的真实 OpenSSH 服务器（`src-tauri/tests/docker`）上跑集成测试，需要 Docker Compose v2。本机没有 Docker 或设置了 `RAIN_TERM_SKIP_DOCKER` 时跳过。
 
 想在没有真实服务器的情况下试用界面，可以在 `src-tauri` 下运行 `cargo run --example dev_sshd`，它会在 2222 端口启动一个本地测试 SSH 服务器，用户 `tester`，密码 `pa55`。
 

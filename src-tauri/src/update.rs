@@ -89,7 +89,7 @@ impl Updater {
         let current = self.info.lock().unwrap().current.clone();
         let mut client = reqwest::Client::builder()
             // GitHub API 要求带 User-Agent。
-            .user_agent(format!("rain-dial/{current}"))
+            .user_agent(format!("rain-term/{current}"))
             .timeout(Duration::from_secs(15));
         if let Some(p) = proxy {
             client = client.proxy(reqwest::Proxy::all(p.as_str())?);

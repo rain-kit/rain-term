@@ -7,9 +7,13 @@ use crate::i18n::{LANGUAGES, Msg};
 use crate::util::write_file_atomic;
 
 pub const APP_NAME: &str = "Rain Term";
-pub const DATA_DIR_NAME: &str = "rain-dial";
+pub const DATA_DIR_NAME: &str = "rain-term";
 /// 设置后用它作为数据目录（便携模式、测试用）。
-pub const DATA_DIR_ENV: &str = "RAIN_DIAL_DATA_DIR";
+pub const DATA_DIR_ENV: &str = "RAIN_TERM_DATA_DIR";
+/// 改名前的目录名。新目录还没有数据时，启动会把整个旧目录改名过来。
+const LEGACY_DATA_DIR_NAME: &str = "rain-dial";
+/// 改名前的环境变量，只在没有设置 RAIN_TERM_DATA_DIR 时生效。
+const LEGACY_DATA_DIR_ENV: &str = "RAIN_DIAL_DATA_DIR";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -257,15 +261,58 @@ pub fn save(data_dir: &Path, cfg: &AppConfig) -> std::io::Result<()> {
     write_file_atomic(&config_file(data_dir), text.as_bytes())
 }
 
-/// 数据目录：环境变量 RAIN_DIAL_DATA_DIR 优先，
-/// 否则为 Windows 的 %AppData%\rain-dial、macOS 的 ~/Library/Application Support/rain-dial、Linux 的 ~/.config/rain-dial。
+/// 数据目录：环境变量 RAIN_TERM_DATA_DIR 优先（也认旧的 RAIN_DIAL_DATA_DIR），
+/// 否则为 Windows 的 %AppData%\rain-term、macOS 的 ~/Library/Application Support/rain-term、Linux 的 ~/.config/rain-term。
+/// 这些位置上如果还是旧的 rain-dial 目录，会改名为 rain-term。
 pub fn default_data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os(DATA_DIR_ENV).filter(|d| !d.is_empty()) {
-        return PathBuf::from(dir);
+    if let Some(dir) = env_dir(DATA_DIR_ENV) {
+        return dir;
     }
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(DATA_DIR_NAME)
+    if let Some(dir) = env_dir(LEGACY_DATA_DIR_ENV) {
+        return dir;
+    }
+    let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    let dir = base.join(DATA_DIR_NAME);
+    adopt_legacy_data_dir(&base.join(LEGACY_DATA_DIR_NAME), &dir);
+    dir
+}
+
+fn env_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+}
+
+const DATA_MARKERS: [&str; 5] = [
+    "connections.json",
+    "config.yaml",
+    "secrets.json",
+    "keys.json",
+    "accounts.json",
+];
+
+fn dir_has_data(dir: &Path) -> bool {
+    DATA_MARKERS.iter().any(|name| dir.join(name).is_file())
+}
+
+/// 新目录还没有连接或配置时，把旧目录整个改名过来。失败就留在原地，下次启动再试。
+fn adopt_legacy_data_dir(legacy: &Path, dir: &Path) {
+    if !legacy.is_dir() || dir_has_data(dir) || !dir_has_data(legacy) {
+        return;
+    }
+    if dir.exists() {
+        let empty = std::fs::read_dir(dir).is_ok_and(|mut it| it.next().is_none());
+        if !empty || std::fs::remove_dir(dir).is_err() {
+            return;
+        }
+    }
+    if let Err(e) = std::fs::rename(legacy, dir) {
+        eprintln!(
+            "迁移数据目录失败（{} -> {}）：{e}",
+            legacy.display(),
+            dir.display()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -338,5 +385,52 @@ mod tests {
         let err = cfg.validate().unwrap_err();
         assert_eq!(err.i18n, "err.config.outOfRange");
         assert_eq!(err.text(), "terminal.scrollback 应在 100 到 100000 之间：0");
+    }
+
+    #[test]
+    fn legacy_data_dir_is_renamed_when_new_dir_is_absent() {
+        let base = temp_dir();
+        let legacy = base.join("rain-dial");
+        let dir = base.join("rain-term");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("connections.json"), "[]").unwrap();
+        std::fs::write(legacy.join("secrets.json"), "{}").unwrap();
+        adopt_legacy_data_dir(&legacy, &dir);
+        assert!(dir.join("connections.json").is_file());
+        assert!(dir.join("secrets.json").is_file());
+        assert!(!legacy.exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn legacy_data_dir_stays_when_new_dir_already_has_data() {
+        let base = temp_dir();
+        let legacy = base.join("rain-dial");
+        let dir = base.join("rain-term");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(legacy.join("connections.json"), "old").unwrap();
+        std::fs::write(dir.join("config.yaml"), "new").unwrap();
+        adopt_legacy_data_dir(&legacy, &dir);
+        assert_eq!(
+            std::fs::read_to_string(legacy.join("connections.json")).unwrap(),
+            "old"
+        );
+        assert_eq!(std::fs::read_to_string(dir.join("config.yaml")).unwrap(), "new");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn empty_new_dir_does_not_block_legacy_move() {
+        let base = temp_dir();
+        let legacy = base.join("rain-dial");
+        let dir = base.join("rain-term");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(legacy.join("config.yaml"), "old").unwrap();
+        adopt_legacy_data_dir(&legacy, &dir);
+        assert_eq!(std::fs::read_to_string(dir.join("config.yaml")).unwrap(), "old");
+        assert!(!legacy.exists());
+        let _ = std::fs::remove_dir_all(base);
     }
 }

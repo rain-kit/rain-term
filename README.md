@@ -95,7 +95,7 @@ cd src-tauri
 cargo test
 ```
 
-`cargo test` also runs integration tests against real OpenSSH servers in Docker (`src-tauri/tests/docker`), which need Docker Compose v2. They are skipped when Docker is not available or `RAIN_DIAL_SKIP_DOCKER` is set.
+`cargo test` also runs integration tests against real OpenSSH servers in Docker (`src-tauri/tests/docker`), which need Docker Compose v2. They are skipped when Docker is not available or `RAIN_TERM_SKIP_DOCKER` is set.
 
 For trying the UI without a real server, `cargo run --example dev_sshd` (in `src-tauri`) starts a local test SSH server on port 2222 with user `tester` and password `pa55`.
 

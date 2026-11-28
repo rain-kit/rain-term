@@ -399,7 +399,7 @@ impl server::Handler for ServerHandler {
 }
 
 pub fn temp_dir() -> PathBuf {
-    let d = std::env::temp_dir().join(format!("raindial-it-{}", rain_dial::util::new_id()));
+    let d = std::env::temp_dir().join(format!("rainterm-it-{}", rain_term::util::new_id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -458,8 +458,8 @@ pub fn assert_same_tree(a: &Path, b: &Path) {
 pub async fn start_agent(keys: &[PrivateKey]) -> String {
     use tokio::net::windows::named_pipe::ServerOptions;
     let name = format!(
-        r"\\.\pipe\rain-dial-test-agent-{}",
-        rain_dial::util::new_id()
+        r"\\.\pipe\rain-term-test-agent-{}",
+        rain_term::util::new_id()
     );
     let first = ServerOptions::new()
         .first_pipe_instance(true)

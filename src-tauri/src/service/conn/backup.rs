@@ -20,7 +20,9 @@ use crate::error::{self, ApiError, ApiResult};
 use crate::model::{Account, AuthType, ConnParams, Connection, SshKey, validate_refs};
 use crate::secrets::random;
 
-const EXPORT_APP: &str = "rain-dial";
+const EXPORT_APP: &str = "rain-term";
+/// 改名前导出的文件，导入时仍然接受。
+const LEGACY_EXPORT_APP: &str = "rain-dial";
 const EXPORT_VERSION: u32 = 2;
 const KDF: &str = "pbkdf2-sha256";
 /// debug 构建下 PBKDF2 很慢，测试用很小的次数。
@@ -313,11 +315,18 @@ impl ConnService {
     }
 }
 
-/// 只接受本应用这个版本的导出格式。
+fn is_our_app(app: &str) -> bool {
+    app == EXPORT_APP || app == LEGACY_EXPORT_APP
+}
+
+/// 只接受本应用当前的导出格式。改名前的 rain-dial 文件同样可以导入。
 fn parse(text: &str) -> ApiResult<ExportFile> {
     let text = text.trim_start_matches('\u{feff}');
     let value: serde_json::Value = serde_json::from_str(text).map_err(|_| invalid_file())?;
-    let ours = value.get("app").and_then(|v| v.as_str()) == Some(EXPORT_APP)
+    let ours = value
+        .get("app")
+        .and_then(|v| v.as_str())
+        .is_some_and(is_our_app)
         && value.get("version").and_then(|v| v.as_u64()) == Some(EXPORT_VERSION as u64);
     if !ours {
         return Err(invalid_file());
@@ -546,16 +555,33 @@ mod tests {
     fn import_rejects_other_formats() {
         let f = fixture();
         let old = r#"{"app":"rain-dial","version":1,"connections":[{"kind":"ssh","host":"h","user":"u"}]}"#;
+        let wrong_version = r#"{"app":"rain-term","version":1,"connections":[{"kind":"ssh","host":"h","user":"u"}]}"#;
         let array = r#"[{"kind":"ssh","host":"h","user":"u"}]"#;
         let finalshell = r#"{"id":"h1","name":"db","host":"10.0.0.1","user_name":"root","authentication_type":1,"conection_type":100}"#;
         let moba = "[Bookmarks]\nSubRep=\nbastion=#109#0%10.0.0.1%22%ops%\n";
-        for text in [old, array, finalshell, moba, "{}"] {
+        for text in [old, wrong_version, array, finalshell, moba, "{}"] {
             let path = write_file(&f, "other.json", text);
             let err = ConnService::read_import_file(&path).unwrap_err();
             assert_eq!(err.msg.i18n, "err.import.invalidFile", "{text}");
             assert_eq!(f.svc.import(text, "p").unwrap_err().msg.i18n, "err.import.invalidFile");
         }
         assert!(f.svc.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn import_accepts_legacy_app_name() {
+        let src = fixture();
+        create(&src.svc, ssh("a", ""));
+        let (text, _) = src.svc.export(&[], &AppConfig::default(), "p").unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["app"], "rain-term");
+        value["app"] = "rain-dial".into();
+
+        let dst = fixture();
+        let r = dst.svc.import(&value.to_string(), "p").unwrap();
+        assert_eq!(r.counts.connections, 1);
+        let id = dst.svc.list().unwrap().remove(0).conn.id;
+        assert_eq!(ssh_of(&dst.svc.resolve(&id).unwrap()).password, "pw");
     }
 
     #[test]

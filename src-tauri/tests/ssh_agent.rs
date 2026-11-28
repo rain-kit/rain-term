@@ -4,9 +4,9 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rain_dial::core::ssh::known_hosts::HostKeyStore;
-use rain_dial::core::ssh::{self, DialOptions, SshTarget};
-use rain_dial::model::AuthType;
+use rain_term::core::ssh::known_hosts::HostKeyStore;
+use rain_term::core::ssh::{self, DialOptions, SshTarget};
+use rain_term::model::AuthType;
 use tokio_util::sync::CancellationToken;
 
 use common::{TestServer, USER, random_key, start_agent, temp_dir};

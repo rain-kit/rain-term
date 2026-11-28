@@ -5,21 +5,21 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use rain_dial::core::rdp::cert::CertStore;
-use rain_dial::core::ssh::known_hosts::HostKeyStore;
-use rain_dial::core::ssh::shell::PtySize;
-use rain_dial::error;
-use rain_dial::events::NoopSink;
-use rain_dial::model::{ConnParams, Connection, SaveConnReq, SshParams};
-use rain_dial::secrets::{MemoryBackend, Secrets};
-use rain_dial::service::conn::ConnService;
-use rain_dial::service::hostkey::HostKeyService;
-use rain_dial::service::pool::ClientPool;
-use rain_dial::service::session::{SessionEvent, SessionService};
-use rain_dial::service::sftp::{
+use rain_term::core::rdp::cert::CertStore;
+use rain_term::core::ssh::known_hosts::HostKeyStore;
+use rain_term::core::ssh::shell::PtySize;
+use rain_term::error;
+use rain_term::events::NoopSink;
+use rain_term::model::{ConnParams, Connection, SaveConnReq, SshParams};
+use rain_term::secrets::{MemoryBackend, Secrets};
+use rain_term::service::conn::ConnService;
+use rain_term::service::hostkey::HostKeyService;
+use rain_term::service::pool::ClientPool;
+use rain_term::service::session::{SessionEvent, SessionService};
+use rain_term::service::sftp::{
     Direction, FileKind, OpenOptions, PREVIEW_LIMIT, SftpEvent, SftpService, Transfer,
 };
-use rain_dial::store::ConnStore;
+use rain_term::store::ConnStore;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use common::sftp_fs::HOME;

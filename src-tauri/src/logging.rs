@@ -11,7 +11,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 const FILE_MAX_SIZE: u64 = 10 * 1024 * 1024;
 const FILE_BACKUPS: usize = 3;
-pub const LOG_FILE: &str = "rain-dial.log";
+pub const LOG_FILE: &str = "rain-term.log";
 
 /// 按大小滚动的日志文件：超过 10MB 时改名为 .1，最多保留 3 个旧文件。
 pub struct RotatingFile {
@@ -109,7 +109,7 @@ fn targets(level: &str) -> Targets {
         .with_default(lvl.min(LevelFilter::WARN))
 }
 
-/// 初始化全局日志：写入 logs/rain-dial.log（JSON 行），调试版同时输出到控制台。
+/// 初始化全局日志：写入 logs/rain-term.log（JSON 行），调试版同时输出到控制台。
 pub fn init(log_dir: &Path, level: &str) {
     let file = RotatingFile::new(log_dir.join(LOG_FILE));
     let file_layer = tracing_subscriber::fmt::layer()
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn rotating_file_rotates() {
-        let dir = std::env::temp_dir().join(format!("raindial-log-{}", crate::util::new_id()));
+        let dir = std::env::temp_dir().join(format!("rainterm-log-{}", crate::util::new_id()));
         let f = RotatingFile::new(dir.join("a.log"));
         let chunk = vec![b'x'; 1024 * 1024];
         for _ in 0..12 {
