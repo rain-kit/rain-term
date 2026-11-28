@@ -312,7 +312,7 @@ const en: Messages = {
   "settings.scrollback": "Scrollback",
   "settings.scrollbackDesc": "Lines of output kept in each terminal. Also applies to terminals that are already open.",
   "tools.title": "Tools",
-  "tools.enhance": "Enhancements",
+  "tools.terminal": "Terminal",
   "tools.clickMovesCursor": "Click to place cursor",
   "tools.clickMovesCursorDesc": "Left-click text in full-screen programs such as vim or nano to place the cursor there; programs that handle the mouse themselves (e.g. vim with set mouse=a) take over",
   "tools.sftp": "SFTP",

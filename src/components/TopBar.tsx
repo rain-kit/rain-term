@@ -4,9 +4,9 @@ import { Copy, Minus, Settings, Square, Wrench, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { isMac, isWindows } from "../lib/format";
 import { useI18n } from "../lib/i18n";
-import { useSettings, useToast, useUpdate } from "../lib/store";
-import type { ToolsSettings } from "../lib/types";
-import { cx, IconButton, Menu, SwitchRow } from "./ui";
+import { useUpdate } from "../lib/store";
+import ToolsDialog from "./ToolsDialog";
+import { cx, IconButton } from "./ui";
 
 export type View = "terminal" | "settings";
 
@@ -37,69 +37,52 @@ function WindowControls() {
   );
 }
 
-/** 工具菜单：按分组列出可以随时开关的功能，修改后立即保存。 */
-function ToolsMenu() {
+function ToolsButton() {
   const { t } = useI18n();
-  const toast = useToast();
-  const { settings, save } = useSettings();
-  const tools = settings?.tools;
-  const setGroup = <K extends keyof ToolsSettings>(group: K, patch: Partial<ToolsSettings[K]>) =>
-    tools && save({ tools: { ...tools, [group]: { ...tools[group], ...patch } } }).catch(toast.error);
+  const [open, setOpen] = useState(false);
   return (
-    <Menu
-      trigger={(open) => (
-        <IconButton label={t("tools.title")} onClick={open}>
-          <Wrench size={16} />
-        </IconButton>
-      )}
-      footer={
-        tools && (
-          <div className="w-80 px-2.5 py-2">
-            <div className="mb-2 text-xs font-semibold tracking-wide text-muted">{t("tools.sftp")}</div>
-            <SwitchRow
-              title={t("tools.sftpSudo")}
-              desc={t("tools.sftpSudoDesc")}
-              checked={tools.sftp.sudo}
-              onChange={(sudo) => setGroup("sftp", { sudo })}
-            />
-            <SwitchRow
-              title={t("tools.sftpFollow")}
-              desc={t("tools.sftpFollowDesc")}
-              checked={tools.sftp.followTerminal}
-              onChange={(followTerminal) => setGroup("sftp", { followTerminal })}
-            />
-            <div className="mt-4 mb-2 text-xs font-semibold tracking-wide text-muted">{t("tools.enhance")}</div>
-            <SwitchRow
-              title={t("tools.clickMovesCursor")}
-              desc={t("tools.clickMovesCursorDesc")}
-              checked={tools.enhance.clickMovesCursor}
-              onChange={(clickMovesCursor) => setGroup("enhance", { clickMovesCursor })}
-            />
-          </div>
-        )
-      }
-    />
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className={cx(
+          "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm transition-colors hover:bg-subtle hover:text-ink",
+          open ? "bg-subtle text-ink" : "text-muted",
+        )}
+      >
+        <Wrench size={15} />
+        {t("tools.title")}
+      </button>
+      <ToolsDialog open={open} onClose={() => setOpen(false)} />
+    </>
   );
 }
 
-/** 窗口顶栏，同时作为拖动区域：右侧是工具、设置（再点一次回到终端）和 Windows 的窗口按钮。 */
+/** 窗口顶栏，同时作为拖动区域：左侧是名称（点击回到终端）和工具，右侧是设置（再点一次回到终端）和 Windows 的窗口按钮。 */
 export default function TopBar({ view, onChange }: { view: View; onChange: (v: View) => void }) {
   const { t } = useI18n();
   const update = useUpdate().info;
   return (
     <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-5 border-b border-line bg-surface/60">
       {/* macOS 左侧留出红绿灯按钮的位置。 */}
-      <div data-tauri-drag-region className={cx("flex items-center gap-2.5", isMac ? "pl-20" : "pl-4")}>
-        <img src="/logo.svg" alt="" className="pointer-events-none size-6" />
-        <span data-tauri-drag-region className="font-bold tracking-tight">
-          Rain Term
-        </span>
+      <div data-tauri-drag-region className={cx("flex items-center", isMac ? "pl-20" : "pl-4")}>
+        {/* 不能放进拖动区域，否则按下鼠标就开始拖窗口，点击不生效。 */}
+        <button
+          onClick={() => onChange("terminal")}
+          title={t("nav.backToTerminal")}
+          className="-ml-1.5 flex h-8 items-center gap-2.5 rounded-lg px-1.5 transition-colors hover:bg-subtle"
+        >
+          <img src="/logo.svg" alt="" className="pointer-events-none size-6" />
+          <span className="font-bold tracking-tight">Rain Term</span>
+        </button>
+      </div>
+
+      <div className="-ml-2 flex items-center gap-1">
+        <ToolsButton />
       </div>
 
       <div data-tauri-drag-region className="flex-1 self-stretch" />
 
       <div className="flex items-center gap-1">
-        <ToolsMenu />
         <IconButton
           label={
             view === "settings"

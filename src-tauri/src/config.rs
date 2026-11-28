@@ -78,7 +78,7 @@ pub struct ToolsConfig {
     pub sftp: SftpToolsConfig,
 }
 
-/// “增强”分组，默认全部关闭。
+/// 工具窗口里的“终端”分组，默认全部关闭。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct EnhanceConfig {

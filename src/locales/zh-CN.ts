@@ -301,7 +301,7 @@ const zhCN = {
   "settings.scrollback": "回滚行数",
   "settings.scrollbackDesc": "每个终端最多保留的历史输出行数，修改后对已打开的终端也生效",
   "tools.title": "工具",
-  "tools.enhance": "增强",
+  "tools.terminal": "终端",
   "tools.clickMovesCursor": "点击光标定位",
   "tools.clickMovesCursorDesc": "在 vim、nano 等全屏程序里左键点击文字，光标定位到点击的位置；程序自己处理鼠标时（如 vim 的 set mouse=a）由程序处理",
   "tools.sftp": "SFTP",

@@ -303,7 +303,7 @@ const zhTW: Messages = {
   "settings.scrollback": "回捲行數",
   "settings.scrollbackDesc": "每個終端機最多保留的歷史輸出行數，修改後對已開啟的終端機也生效",
   "tools.title": "工具",
-  "tools.enhance": "增強",
+  "tools.terminal": "終端機",
   "tools.clickMovesCursor": "點擊游標定位",
   "tools.clickMovesCursorDesc": "在 vim、nano 等全螢幕程式裡用左鍵點選文字，游標定位到點選的位置；程式自行處理滑鼠時（如 vim 的 set mouse=a）由程式處理",
   "tools.sftp": "SFTP",
