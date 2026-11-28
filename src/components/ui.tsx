@@ -56,7 +56,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
-  size?: "sm" | "md";
+  size?: "xs" | "sm" | "md";
   tone?: "default" | "danger";
 }
 
@@ -70,8 +70,8 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       title={label}
       aria-label={label}
       className={cx(
-        "inline-flex items-center justify-center rounded-lg text-muted transition-colors disabled:opacity-40 disabled:pointer-events-none",
-        size === "sm" ? "size-7" : "size-8",
+        "inline-flex items-center justify-center text-muted transition-colors disabled:opacity-40 disabled:pointer-events-none",
+        size === "xs" ? "size-6 rounded-md" : size === "sm" ? "size-7 rounded-lg" : "size-8 rounded-lg",
         tone === "danger" ? "hover:bg-red-500/10 hover:text-red-600" : "hover:bg-subtle hover:text-ink",
         className,
       )}

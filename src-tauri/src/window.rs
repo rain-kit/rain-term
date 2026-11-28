@@ -109,7 +109,7 @@ fn create_main(app: &AppHandle) -> tauri::Result<()> {
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .hidden_title(true)
-        .traffic_light_position(tauri::LogicalPosition::new(16.0, 13.0));
+        .traffic_light_position(tauri::LogicalPosition::new(14.0, 17.0));
 
     let w = builder.build()?;
     let _ = w.set_focus();

@@ -54,8 +54,8 @@ function DialogButton({
       <button
         onClick={() => setOpen(true)}
         className={cx(
-          "inline-flex items-center gap-1.5 transition-colors hover:bg-subtle hover:text-ink",
-          isMac ? "h-7 rounded-md px-2 text-[13px]" : "h-8 rounded-lg px-2.5 text-sm",
+          "inline-flex items-center transition-colors hover:bg-subtle hover:text-ink",
+          isMac ? "h-6 gap-1 rounded-md px-1.5 text-xs" : "h-8 gap-1.5 rounded-lg px-2.5 text-sm",
           open ? "bg-subtle text-ink" : "text-muted",
         )}
       >
@@ -84,21 +84,21 @@ export default function TopBar({ view, onChange }: { view: View; onChange: (v: V
 
   const dialogs = (
     <div className={cx("flex items-center", isMac ? "gap-0.5" : "-ml-2 gap-1")}>
-      <DialogButton icon={<KeyRound size={isMac ? 14 : 15} />} label={t("keys.title")} dialog={KeysDialog} />
-      <DialogButton icon={<Wrench size={isMac ? 14 : 15} />} label={t("tools.title")} dialog={ToolsDialog} />
+      <DialogButton icon={<KeyRound size={isMac ? 13 : 15} />} label={t("keys.title")} dialog={KeysDialog} />
+      <DialogButton icon={<Wrench size={isMac ? 13 : 15} />} label={t("tools.title")} dialog={ToolsDialog} />
     </div>
   );
 
   const settingsBtn = (
     <IconButton
-      size={isMac ? "sm" : "md"}
+      size={isMac ? "xs" : "md"}
       label={settingsLabel}
       onClick={() => onChange(view === "settings" ? "terminal" : "settings")}
       className={cx("relative", view === "settings" && "bg-subtle text-ink")}
     >
-      {view === "settings" ? <X size={isMac ? 16 : 17} /> : <Settings size={isMac ? 16 : 17} />}
+      {view === "settings" ? <X size={isMac ? 14 : 17} /> : <Settings size={isMac ? 14 : 17} />}
       {update?.hasUpdate && view !== "settings" && (
-        <span className={cx("absolute size-2 rounded-full bg-red-500", isMac ? "top-1 right-1" : "top-1.5 right-1.5")} />
+        <span className={cx("absolute rounded-full bg-red-500", isMac ? "top-0.5 right-0.5 size-1.5" : "top-1.5 right-1.5 size-2")} />
       )}
     </IconButton>
   );
@@ -107,23 +107,23 @@ export default function TopBar({ view, onChange }: { view: View; onChange: (v: V
     return (
       <header
         data-tauri-drag-region="deep"
-        className="relative flex h-10 shrink-0 items-center justify-end border-b border-line bg-surface/60 pr-2.5 pl-20"
+        className="relative flex h-8 shrink-0 items-center justify-end border-b border-line bg-surface/60 pr-2 pl-18"
       >
         {view === "settings" ? (
           <button
             onClick={() => onChange("terminal")}
             title={t("nav.backToTerminal")}
-            className="absolute left-1/2 -translate-x-1/2 rounded-md px-2 py-0.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink"
+            className="absolute left-1/2 -translate-x-1/2 rounded px-1.5 py-0.5 text-xs font-medium text-muted transition-colors hover:bg-subtle hover:text-ink"
           >
             Rain Term
           </button>
         ) : (
-          <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-[13px] font-medium text-muted">
+          <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-xs font-medium text-muted">
             Rain Term
           </span>
         )}
         {dialogs}
-        <div className="mx-1.5 h-3.5 w-px bg-line" />
+        <div className="mx-1 h-3 w-px bg-line" />
         {settingsBtn}
       </header>
     );
