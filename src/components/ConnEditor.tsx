@@ -1,5 +1,5 @@
-import { PlugZap, Plus } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Check, KeyRound, Loader2, Lock, PlugZap, Plus, Settings2, SlidersHorizontal, UserRound, Waypoints } from "lucide-react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { connApi } from "../lib/api";
 import { loadGroups } from "../lib/groups";
 import {
@@ -16,12 +16,28 @@ import {
 import { t, useI18n } from "../lib/i18n";
 import { useAccounts, useConns, useKeys, useSettings, useToast } from "../lib/store";
 import type { AccountAuth, AccountView, ConnKind, ConnView, RdpResolution, SaveConnReq, SftpSudo } from "../lib/types";
-import { accountAllows, accountLabel } from "./AccountsPanel";
+import { accountAllows, AccountEditor } from "./AccountsPanel";
 import KeysDialog, { type KeysTab } from "./KeysDialog";
 import KindIcon from "./KindIcon";
-import { Button, cx, Dialog, Field, Input, PasswordInput, Segmented, Select, SwitchRow } from "./ui";
+import {
+  Button,
+  Card,
+  ComboInput,
+  cx,
+  Dialog,
+  Field,
+  IncognitoBadge,
+  Input,
+  PasswordInput,
+  ProdBadge,
+  Segmented,
+  Select,
+  SwitchRow,
+  type SelectOption,
+} from "./ui";
 
 type AuthMode = AccountAuth | "account";
+type EditorTab = "general" | "advanced";
 
 interface Form {
   kind: ConnKind;
@@ -55,6 +71,11 @@ type Errors = Partial<Record<keyof Form, string>>;
 
 const DEFAULT_WIDTH = 1920;
 const DEFAULT_HEIGHT = 1080;
+const RDP_PRESETS: [number, number][] = [
+  [1920, 1080],
+  [2560, 1440],
+  [1280, 720],
+];
 
 function toForm(c?: ConnView | null): Form {
   const kind = c?.kind ?? "ssh";
@@ -152,17 +173,6 @@ function toReq(f: Form, id: string): SaveConnReq {
   };
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="mt-5">
-      <h3 className="mb-2.5 text-xs font-semibold tracking-wide text-muted">{title}</h3>
-      <div className="flex flex-col gap-3">{children}</div>
-    </section>
-  );
-}
-
-const Row = ({ children }: { children: ReactNode }) => <div className="flex gap-3 [&>*]:flex-1">{children}</div>;
-
 /** 密码输入框：已保存的密码显示为“已保存”，留空表示不修改。 */
 function SecretField({
   label,
@@ -170,20 +180,25 @@ function SecretField({
   value,
   hint,
   onChange,
+  onKeyDown,
+  className,
 }: {
   label: string;
   saved: boolean;
   value: string;
   hint?: string;
   onChange: (v: string) => void;
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
+  className?: string;
 }) {
   const { t } = useI18n();
   return (
-    <Field label={label} hint={saved ? t("editor.secretSaved") : hint}>
+    <Field label={label} hint={saved ? t("editor.secretSaved") : hint} className={className}>
       <PasswordInput
         value={value}
         placeholder={saved ? "••••••••" : undefined}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
       />
     </Field>
   );
@@ -207,17 +222,20 @@ export default function ConnEditor({
   const { conns } = useConns();
   const { settings } = useSettings();
   const [form, setForm] = useState<Form>(() => toForm(conn));
+  const [tab, setTab] = useState<EditorTab>("general");
   const [errors, setErrors] = useState<Errors>({});
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const { keys } = useKeys();
   const { accounts } = useAccounts();
   const [manage, setManage] = useState<KeysTab | null>(null);
+  const [quickNewAccount, setQuickNewAccount] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     const next = toForm(conn);
     if (!conn && group) next.group = group;
     setForm(next);
+    setTab("general");
     setErrors({});
   }, [open, conn, group]);
 
@@ -226,6 +244,7 @@ export default function ConnEditor({
     setForm((x) => ({ ...x, [k]: v }));
     if (errors[k]) setErrors((e) => ({ ...e, [k]: undefined }));
   };
+
   // 切换类型时端口、用户名还是原类型的默认值就换成新类型的默认值；选的登录用户不能用于新类型时取消选择。
   const setKind = (kind: ConnKind) => {
     setForm((x) => {
@@ -245,6 +264,7 @@ export default function ConnEditor({
     });
     setErrors({});
   };
+
   const setAuth = (auth: AuthMode) => {
     setForm((x) => {
       const acc = auth === "account" ? accounts.find((a) => a.id === x.accountId) : undefined;
@@ -252,14 +272,17 @@ export default function ConnEditor({
     });
     setErrors((e) => ({ ...e, user: undefined, accountId: undefined, keyId: undefined }));
   };
+
   // 刚新建的用户还不在列表里，由调用方直接传入。
   const setAccount = (id: string, acc = accounts.find((a) => a.id === id)) => {
     setForm((x) => ({ ...x, auth: "account", accountId: id, user: acc?.user ?? x.user }));
     setErrors((e) => ({ ...e, user: undefined, accountId: undefined, keyId: undefined }));
   };
+
   const rdp = f.kind === "rdp";
   const useAccount = f.auth === "account";
-  const account = accounts.find((a) => a.id === f.accountId && accountAllows(a, f.kind));
+  const usableAccounts = useMemo(() => accounts.filter((a) => accountAllows(a, f.kind)), [accounts, f.kind]);
+  const account = usableAccounts.find((a) => a.id === f.accountId);
 
   const groups = useMemo(() => [...new Set([...loadGroups(), ...conns.map((c) => c.group).filter(Boolean)])] as string[], [conns, open]);
 
@@ -278,21 +301,27 @@ export default function ConnEditor({
     return conns.filter((c) => c.kind === "ssh" && !(conn && passesSelf(c.id)));
   }, [conns, conn]);
 
-  const keyOptions = useMemo(() => {
-    const opts = keys.map((k) => ({ value: k.id, label: `${k.name} · ${keyTypeLabel(k)}` }));
+  const keyOptions = useMemo<SelectOption[]>(() => {
+    const opts: SelectOption[] = keys.map((k) => ({ value: k.id, label: k.name, sub: keyTypeLabel(k) }));
     // 选中的密钥已被删除时也显示出来，保存时由后端报错。
     if (f.keyId && !keys.some((k) => k.id === f.keyId)) opts.push({ value: f.keyId, label: t("editor.keyMissing") });
     return [{ value: "", label: t(keys.length ? "editor.keyNone" : "editor.keyEmpty") }, ...opts];
   }, [keys, f.keyId, t]);
 
   // 只列出能用于当前类型的登录用户。
-  const accountOptions = useMemo(() => {
-    const usable = accounts.filter((a) => accountAllows(a, f.kind));
-    const opts = usable.map((a) => ({ value: a.id, label: accountLabel(a) }));
+  const accountOptions = useMemo<SelectOption[]>(() => {
+    const opts: SelectOption[] = usableAccounts.map((a) => {
+      const authLabel = a.auth === "key" ? keys.find((k) => k.id === a.keyId)?.name ?? t("editor.auth.key") : t("editor.auth.password");
+      return {
+        value: a.id,
+        label: a.name,
+        sub: a.name === a.user ? authLabel : `@${a.user} · ${authLabel}`,
+      };
+    });
     // 选中的用户已被删除或不能用于这种连接时也显示出来，保存时由后端报错。
     if (f.accountId && !opts.some((o) => o.value === f.accountId)) opts.push({ value: f.accountId, label: t("editor.accountMissing") });
-    return [{ value: "", label: t(usable.length ? "editor.accountNone" : "editor.accountEmpty") }, ...opts];
-  }, [accounts, f.kind, f.accountId, t]);
+    return [{ value: "", label: t(usableAccounts.length ? "editor.accountNone" : "editor.accountEmpty") }, ...opts];
+  }, [usableAccounts, keys, f.accountId, t]);
 
   const accountHint = (a: AccountView) =>
     t("editor.accountHint", {
@@ -300,14 +329,27 @@ export default function ConnEditor({
       auth: a.auth === "key" ? `${t("editor.auth.key")} ${keys.find((k) => k.id === a.keyId)?.name ?? ""}`.trim() : t("editor.auth.password"),
     });
 
+  const hasGeneralError = Boolean(errors.host || errors.port || errors.accountId || errors.user || errors.keyId);
+  const hasAdvancedError = Boolean(errors.keepaliveSeconds || errors.width || errors.height);
+  const hasCustomAdvanced =
+    Boolean(f.jumpId) ||
+    f.production ||
+    (rdp
+      ? f.resolution === "fixed" || !f.clipboard
+      : f.incognito || Boolean(f.initDir.trim()) || f.sftpSudo !== "default" || f.keepaliveSeconds.trim() !== "30");
+
   const check = () => {
     const errs = validate(f);
     setErrors(errs);
+    const genErr = Boolean(errs.host || errs.port || errs.accountId || errs.user || errs.keyId);
+    const advErr = Boolean(errs.keepaliveSeconds || errs.width || errs.height);
+    if (genErr && tab !== "general") setTab("general");
+    else if (!genErr && advErr && tab !== "advanced") setTab("advanced");
     return Object.keys(errs).length === 0;
   };
 
   const submit = async () => {
-    if (!check()) return;
+    if (busy || !check()) return;
     setBusy("save");
     try {
       await connApi.save(toReq(f, conn?.id ?? ""));
@@ -321,7 +363,7 @@ export default function ConnEditor({
   };
 
   const test = async () => {
-    if (!check()) return;
+    if (busy || !check()) return;
     setBusy("test");
     try {
       const r = await connApi.test(toReq(f, conn?.id ?? ""));
@@ -335,274 +377,510 @@ export default function ConnEditor({
     }
   };
 
+  const onEnter = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") submit();
+  };
+
   return (
     <Dialog
       open={open}
       onClose={busy ? undefined : onClose}
+      divided
+      bodyClassName="px-5 py-3.5"
       title={
         <span className="flex items-center gap-2">
           <KindIcon kind={f.kind} />
-          {t(conn ? "editor.titleEdit" : "editor.titleNew", { kind: KIND_LABEL[f.kind] })}
+          <span className="truncate">{t(conn ? "editor.titleEdit" : "editor.titleNew", { kind: KIND_LABEL[f.kind] })}</span>
+          {conn?.name && <span className="truncate text-xs font-normal text-muted">· {conn.name}</span>}
         </span>
       }
       width="max-w-xl"
       footer={
         <>
-          <Button icon={<PlugZap size={14} />} onClick={test} disabled={!!busy}>
-            {t("editor.test")}
+          <Button
+            icon={busy === "test" ? <Loader2 size={14} className="animate-spin" /> : <PlugZap size={14} />}
+            onClick={test}
+            disabled={!!busy}
+          >
+            {t(busy === "test" ? "editor.testing" : "editor.test")}
           </Button>
           <span className="flex-1" />
           <Button onClick={onClose} disabled={!!busy}>
             {t("common.cancel")}
           </Button>
-          <Button variant="primary" onClick={submit} disabled={!!busy}>
+          <Button
+            variant="primary"
+            icon={busy === "save" ? <Loader2 size={14} className="animate-spin" /> : undefined}
+            onClick={submit}
+            disabled={!!busy}
+          >
             {t("common.save")}
           </Button>
         </>
       }
     >
-      {!conn && (
-        <Field label={t("editor.kind")} className="mb-3">
-          <Segmented<ConnKind>
-            value={f.kind}
-            onChange={setKind}
-            options={[
-              { value: "ssh", label: t("editor.kind.ssh") },
-              { value: "rdp", label: t("editor.kind.rdp") },
-            ]}
-          />
-        </Field>
-      )}
-      <Row>
-        <Field label={t("editor.name")}>
-          <Input placeholder={t("editor.namePlaceholder")} value={f.name} onChange={(e) => set("name", e.target.value)} />
-        </Field>
-        <Field label={t("editor.group")}>
-          <Input list="conn-groups" placeholder={t("editor.groupPlaceholder")} value={f.group} onChange={(e) => set("group", e.target.value)} />
-          <datalist id="conn-groups">
-            {groups.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
-        </Field>
-      </Row>
-
-      <Section title={t("editor.section.server")}>
-        <Row>
-          <Field label={t("editor.host")} error={errors.host}>
-            <Input placeholder="example.com" value={f.host} invalid={!!errors.host} onChange={(e) => set("host", e.target.value)} />
-          </Field>
-          <Field label={t("editor.port")} error={errors.port} className="!flex-none w-28">
-            <Input value={f.port} invalid={!!errors.port} onChange={(e) => set("port", e.target.value)} />
-          </Field>
-        </Row>
-        <Row>
-          <Field
-            label={t("editor.user")}
-            error={useAccount ? errors.accountId : errors.user}
-            hint={!useAccount && rdp ? t("editor.rdpUserHint") : undefined}
-          >
-            {useAccount ? (
-              <div className="flex gap-1.5">
-                <Select
-                  className="min-w-0 flex-1"
-                  value={f.accountId}
-                  invalid={!!errors.accountId}
-                  onChange={(v) => setAccount(v)}
-                  options={accountOptions}
-                />
-                <Button
+      <div className="flex flex-col gap-3">
+        {!conn && (
+          <div className="grid grid-cols-2 gap-2.5">
+            {(["ssh", "rdp"] as const).map((k) => {
+              const active = f.kind === k;
+              return (
+                <button
+                  key={k}
                   type="button"
-                  className="w-8.5 shrink-0 px-0"
-                  title={t("editor.keyAdd")}
-                  aria-label={t("editor.keyAdd")}
-                  onClick={() => setManage("accounts")}
+                  onClick={() => setKind(k)}
+                  className={cx(
+                    "flex items-center gap-3 rounded-xl border p-2.5 text-left transition-all",
+                    active ? "border-accent bg-accent/6 ring-1 ring-accent/25" : "border-line bg-surface hover:bg-subtle/60",
+                  )}
                 >
-                  <Plus size={15} />
-                </Button>
-              </div>
-            ) : (
-              <Input value={f.user} invalid={!!errors.user} onChange={(e) => set("user", e.target.value)} />
-            )}
-          </Field>
-          <Field label={t("editor.authType")} className="!flex-none">
-            <Segmented<AuthMode>
-              value={f.auth}
-              onChange={setAuth}
-              options={
-                rdp
-                  ? [
-                      { value: "account", label: t("editor.account") },
-                      { value: "password", label: t("editor.auth.password") },
-                    ]
-                  : [
-                      { value: "account", label: t("editor.account") },
-                      { value: "password", label: t("editor.auth.password") },
-                      { value: "key", label: t("editor.auth.key") },
-                    ]
-              }
-            />
-          </Field>
-        </Row>
-        {useAccount ? (
-          <p className="-mt-1.5 text-xs text-muted">{account ? accountHint(account) : t("editor.accountNoneHint")}</p>
-        ) : (
-          <>
-            {f.auth === "password" && (
-              <SecretField
-                label={t("editor.password")}
-                saved={!!conn?.hasPassword}
-                value={f.password}
-                onChange={(v) => set("password", v)}
-              />
-            )}
-            {f.auth === "key" && (
-              <Field label={t("editor.key")} error={errors.keyId} hint={t("editor.keyHint")}>
-                <div className="flex gap-2">
-                  <Select
-                    className="min-w-0 flex-1"
-                    value={f.keyId}
-                    invalid={!!errors.keyId}
-                    onChange={(v) => set("keyId", v)}
-                    options={keyOptions}
-                  />
-                  <Button type="button" icon={<Plus size={14} />} onClick={() => setManage("keys")}>
-                    {t("editor.keyAdd")}
-                  </Button>
-                </div>
-              </Field>
-            )}
-          </>
-        )}
-      </Section>
-
-      <Section title={t("editor.section.advanced")}>
-        <Field label={t("editor.jump")} hint={jumpOptions.length ? t(rdp ? "editor.jumpHintRdp" : "editor.jumpHint") : undefined}>
-          <Select
-            value={f.jumpId}
-            onChange={(v) => set("jumpId", v)}
-            options={[
-              { value: "", label: t("editor.jumpNone") },
-              ...jumpOptions.map((c) => ({ value: c.id, label: `${c.name} · ${connAddress(c)}` })),
-              // 引用的连接已被删除时也显示出来，保存时由后端报错。
-              ...(f.jumpId && !jumpOptions.some((c) => c.id === f.jumpId) ? [{ value: f.jumpId, label: f.jumpId }] : []),
-            ]}
-          />
-        </Field>
-        {rdp ? (
-          <Row>
-            <Field label={t("editor.resolution")} className="!flex-none">
-              <Segmented<RdpResolution>
-                value={f.resolution}
-                onChange={(v) => set("resolution", v)}
-                options={[
-                  { value: "fit", label: t("editor.resolution.fit") },
-                  { value: "fixed", label: t("editor.resolution.fixed") },
-                ]}
-              />
-            </Field>
-            {f.resolution === "fixed" && (
-              <>
-                <Field label={t("editor.width")} error={errors.width}>
-                  <Input value={f.width} invalid={!!errors.width} onChange={(e) => set("width", e.target.value)} />
-                </Field>
-                <Field label={t("editor.height")} error={errors.height}>
-                  <Input value={f.height} invalid={!!errors.height} onChange={(e) => set("height", e.target.value)} />
-                </Field>
-              </>
-            )}
-          </Row>
-        ) : (
-          <Row>
-            <Field label={t("editor.initDir")}>
-              <Input mono placeholder={t("editor.initDirPlaceholder")} value={f.initDir} onChange={(e) => set("initDir", e.target.value)} />
-            </Field>
-            <Field label={t("editor.keepalive")} error={errors.keepaliveSeconds} hint={t("editor.keepaliveHint")} className="!flex-none w-36">
-              <Input value={f.keepaliveSeconds} invalid={!!errors.keepaliveSeconds} onChange={(e) => set("keepaliveSeconds", e.target.value)} />
-            </Field>
-          </Row>
-        )}
-        {!rdp && (
-          <Field
-            label={t("editor.sftpSudo")}
-            hint={t(f.sftpSudo === "default" ? "editor.sftpSudoHintDefault" : "editor.sftpSudoHint", {
-              state: t(settings?.tools.sftp.sudo ? "editor.sftpSudo.on" : "editor.sftpSudo.off"),
+                  <KindIcon kind={k} className="!size-8 !rounded-lg" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-medium">{t(`editor.kind.${k}`)}</span>
+                    </div>
+                    <div className="truncate text-[11px] text-muted">{t(`editor.kindDesc.${k}`)}</div>
+                  </div>
+                  <span className="flex size-4 shrink-0 items-center justify-center text-accent">{active && <Check size={15} />}</span>
+                </button>
+              );
             })}
-          >
-            <Segmented<SftpSudo>
-              value={f.sftpSudo}
-              onChange={(v) => set("sftpSudo", v)}
-              options={[
-                { value: "default", label: t("editor.sftpSudo.default") },
-                { value: "off", label: t("editor.sftpSudo.off") },
-                { value: "on", label: t("editor.sftpSudo.on") },
-              ]}
-            />
-          </Field>
-        )}
-      </Section>
-
-      <Section title={t("editor.section.other")}>
-        <SwitchRow
-          title={t("editor.production")}
-          desc={t(rdp ? "editor.productionDescRdp" : "editor.productionDesc")}
-          checked={f.production}
-          onChange={(v) => set("production", v)}
-        />
-        {rdp ? (
-          <SwitchRow
-            title={t("editor.clipboard")}
-            desc={t("editor.clipboardDesc")}
-            checked={f.clipboard}
-            onChange={(v) => set("clipboard", v)}
-          />
-        ) : (
-          <SwitchRow
-            title={t("editor.incognito")}
-            desc={t("editor.incognitoDesc")}
-            checked={f.incognito}
-            onChange={(v) => set("incognito", v)}
-          />
-        )}
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted">{t("editor.color")}</span>
-          <div className="flex items-center gap-2 py-1">
-            <button
-              type="button"
-              title={t("editor.colorNone")}
-              onClick={() => set("color", "")}
-              className={cx(
-                "size-5 rounded-full border border-dashed border-muted/60",
-                !f.color && "ring-2 ring-accent ring-offset-2 ring-offset-surface",
-              )}
-            />
-            {(Object.keys(CONN_COLORS) as ConnColor[]).map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => set("color", c)}
-                className={cx("size-5 rounded-full", CONN_COLORS[c], f.color === c && "ring-2 ring-accent ring-offset-2 ring-offset-surface")}
-              />
-            ))}
           </div>
+        )}
+
+        <Segmented<EditorTab>
+          value={tab}
+          onChange={setTab}
+          className="flex w-full [&>button]:flex-1 [&>button]:justify-center"
+          options={[
+            {
+              value: "general",
+              label: (
+                <>
+                  <Settings2 size={14} />
+                  <span>{t("editor.tab.general")}</span>
+                  {hasGeneralError && <span className="size-1.5 rounded-full bg-red-500" />}
+                </>
+              ),
+            },
+            {
+              value: "advanced",
+              label: (
+                <>
+                  <SlidersHorizontal size={14} />
+                  <span>{t("editor.section.advanced")}</span>
+                  {hasAdvancedError ? (
+                    <span className="size-1.5 rounded-full bg-red-500" />
+                  ) : f.production ? (
+                    <span className="size-1.5 rounded-full bg-red-500" />
+                  ) : hasCustomAdvanced ? (
+                    <span className="size-1.5 rounded-full bg-accent" />
+                  ) : null}
+                </>
+              ),
+            },
+          ]}
+        />
+
+        <div className="flex min-h-78 flex-col gap-3">
+          {tab === "general" ? (
+            <>
+              <div className="flex flex-col gap-3 rounded-xl border border-line bg-subtle/30 p-3.5">
+                <div className="flex items-start gap-3">
+                  <Field label={t("editor.host")} error={errors.host} className="min-w-0 flex-1">
+                    <Input
+                      autoFocus={!conn}
+                      mono
+                      placeholder="example.com"
+                      value={f.host}
+                      invalid={!!errors.host}
+                      onChange={(e) => set("host", e.target.value)}
+                      onKeyDown={onEnter}
+                    />
+                  </Field>
+                  <Field label={t("editor.port")} error={errors.port} className="w-24 shrink-0">
+                    <Input
+                      mono
+                      value={f.port}
+                      invalid={!!errors.port}
+                      onChange={(e) => set("port", e.target.value)}
+                      onKeyDown={onEnter}
+                    />
+                  </Field>
+                </div>
+
+                <Field label={t("editor.authType")}>
+                  <Segmented<AuthMode>
+                    value={f.auth}
+                    onChange={setAuth}
+                    className="flex w-full [&>button]:flex-1 [&>button]:justify-center"
+                    options={
+                      rdp
+                        ? [
+                            {
+                              value: "account",
+                              label: (
+                                <>
+                                  <UserRound size={13} />
+                                  {t("editor.account")}
+                                </>
+                              ),
+                            },
+                            {
+                              value: "password",
+                              label: (
+                                <>
+                                  <Lock size={13} />
+                                  {t("editor.auth.password")}
+                                </>
+                              ),
+                            },
+                          ]
+                        : [
+                            {
+                              value: "account",
+                              label: (
+                                <>
+                                  <UserRound size={13} />
+                                  {t("editor.account")}
+                                </>
+                              ),
+                            },
+                            {
+                              value: "password",
+                              label: (
+                                <>
+                                  <Lock size={13} />
+                                  {t("editor.auth.password")}
+                                </>
+                              ),
+                            },
+                            {
+                              value: "key",
+                              label: (
+                                <>
+                                  <KeyRound size={13} />
+                                  {t("editor.auth.key")}
+                                </>
+                              ),
+                            },
+                          ]
+                    }
+                  />
+                </Field>
+
+                {useAccount ? (
+                  <Field label={t("editor.account")} error={errors.accountId}>
+                    <div className="flex gap-2">
+                      <Select
+                        className="min-w-0 flex-1"
+                        value={f.accountId}
+                        invalid={!!errors.accountId}
+                        onChange={(v) => setAccount(v)}
+                        options={accountOptions}
+                      />
+                      <Button
+                        type="button"
+                        icon={<Plus size={14} />}
+                        onClick={() => (usableAccounts.length ? setManage("accounts") : setQuickNewAccount(true))}
+                      >
+                        {t(usableAccounts.length ? "editor.manageAccounts" : "accounts.newTitle")}
+                      </Button>
+                    </div>
+                    {account ? (
+                      <div className="mt-0.5 flex items-center gap-1.5 rounded-lg border border-line/70 bg-surface px-2.5 py-1.5 text-xs text-muted">
+                        <UserRound size={13} className="shrink-0 text-accent" />
+                        <span className="truncate">{accountHint(account)}</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted">{t("editor.accountNoneHint")}</span>
+                    )}
+                  </Field>
+                ) : f.auth === "password" ? (
+                  <div className="flex items-start gap-3">
+                    <Field
+                      label={t("editor.user")}
+                      error={errors.user}
+                      hint={rdp ? t("editor.rdpUserHint") : undefined}
+                      className="min-w-0 flex-1"
+                    >
+                      <Input
+                        value={f.user}
+                        invalid={!!errors.user}
+                        onChange={(e) => set("user", e.target.value)}
+                        onKeyDown={onEnter}
+                      />
+                    </Field>
+                    <SecretField
+                      label={t("editor.password")}
+                      saved={!!conn?.hasPassword}
+                      value={f.password}
+                      onChange={(v) => set("password", v)}
+                      onKeyDown={onEnter}
+                      className="min-w-0 flex-1"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3">
+                    <Field label={t("editor.user")} error={errors.user} className="w-40 shrink-0">
+                      <Input
+                        value={f.user}
+                        invalid={!!errors.user}
+                        onChange={(e) => set("user", e.target.value)}
+                        onKeyDown={onEnter}
+                      />
+                    </Field>
+                    <Field label={t("editor.key")} error={errors.keyId} hint={t("editor.keyHint")} className="min-w-0 flex-1">
+                      <div className="flex gap-2">
+                        <Select
+                          className="min-w-0 flex-1"
+                          value={f.keyId}
+                          invalid={!!errors.keyId}
+                          onChange={(v) => set("keyId", v)}
+                          options={keyOptions}
+                        />
+                        <Button type="button" icon={<Plus size={14} />} onClick={() => setManage("keys")}>
+                          {t(keys.length ? "editor.manageKeys" : "editor.keyAdd")}
+                        </Button>
+                      </div>
+                    </Field>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-3 rounded-xl border border-line bg-subtle/30 p-3.5">
+                <div className="flex items-start gap-3">
+                  <Field label={t("editor.name")} className="min-w-0 flex-1">
+                    <Input
+                      placeholder={t("editor.namePlaceholder")}
+                      value={f.name}
+                      onChange={(e) => set("name", e.target.value)}
+                      onKeyDown={onEnter}
+                    />
+                  </Field>
+                  <Field label={t("editor.group")} className="min-w-0 flex-1">
+                    <ComboInput
+                      options={groups}
+                      placeholder={t("editor.groupPlaceholder")}
+                      emptyLabel={t("editor.groupPlaceholder")}
+                      value={f.group}
+                      onChange={(v) => set("group", v)}
+                    />
+                  </Field>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-medium text-muted">{t("editor.color")}</span>
+                  <div className="flex items-center gap-2 py-0.5">
+                    <button
+                      type="button"
+                      title={t("editor.colorNone")}
+                      onClick={() => set("color", "")}
+                      className={cx(
+                        "flex size-5 items-center justify-center rounded-full border border-dashed border-muted/60 transition-transform hover:scale-110",
+                        !f.color && "ring-2 ring-accent ring-offset-2 ring-offset-surface",
+                      )}
+                    />
+                    {(Object.keys(CONN_COLORS) as ConnColor[]).map((c) => {
+                      const active = f.color === c;
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => set("color", c)}
+                          className={cx(
+                            "flex size-5 items-center justify-center rounded-full text-white transition-transform hover:scale-110",
+                            CONN_COLORS[c],
+                            active && "ring-2 ring-accent ring-offset-2 ring-offset-surface",
+                          )}
+                        >
+                          {active && <Check size={11} strokeWidth={3} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <Field label={t("editor.note")}>
+                  <textarea
+                    rows={2}
+                    spellCheck={false}
+                    value={f.note}
+                    onChange={(e) => set("note", e.target.value)}
+                    className="w-full resize-none rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-accent focus:ring-3 focus:ring-accent/15"
+                  />
+                </Field>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-col gap-3.5 rounded-xl border border-line bg-subtle/30 p-3.5">
+                <Field label={t("editor.jump")} hint={jumpOptions.length ? t(rdp ? "editor.jumpHintRdp" : "editor.jumpHint") : undefined}>
+                  <Select
+                    value={f.jumpId}
+                    onChange={(v) => set("jumpId", v)}
+                    options={[
+                      { value: "", label: t("editor.jumpNone") },
+                      ...jumpOptions.map((c) => ({ value: c.id, label: c.name, sub: connAddress(c), icon: <Waypoints size={13} /> })),
+                      // 引用的连接已被删除时也显示出来，保存时由后端报错。
+                      ...(f.jumpId && !jumpOptions.some((c) => c.id === f.jumpId) ? [{ value: f.jumpId, label: f.jumpId }] : []),
+                    ]}
+                  />
+                </Field>
+
+                {rdp ? (
+                  <>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-medium text-muted">{t("editor.resolution")}</span>
+                      <Segmented<RdpResolution>
+                        value={f.resolution}
+                        onChange={(v) => set("resolution", v)}
+                        options={[
+                          { value: "fit", label: t("editor.resolution.fit") },
+                          { value: "fixed", label: t("editor.resolution.fixed") },
+                        ]}
+                      />
+                    </div>
+                    {f.resolution === "fixed" && (
+                      <div className="flex flex-col gap-2 rounded-lg bg-subtle/45 p-2.5">
+                        <div className="flex items-start gap-2">
+                          <Field label={t("editor.width")} error={errors.width} className="min-w-0 flex-1">
+                            <Input
+                              mono
+                              value={f.width}
+                              invalid={!!errors.width}
+                              onChange={(e) => set("width", e.target.value)}
+                              onKeyDown={onEnter}
+                            />
+                          </Field>
+                          <span className="mt-7 text-muted">×</span>
+                          <Field label={t("editor.height")} error={errors.height} className="min-w-0 flex-1">
+                            <Input
+                              mono
+                              value={f.height}
+                              invalid={!!errors.height}
+                              onChange={(e) => set("height", e.target.value)}
+                              onKeyDown={onEnter}
+                            />
+                          </Field>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {RDP_PRESETS.map(([w, h]) => {
+                            const active = f.width.trim() === String(w) && f.height.trim() === String(h);
+                            return (
+                              <button
+                                key={`${w}x${h}`}
+                                type="button"
+                                onClick={() => {
+                                  set("width", String(w));
+                                  set("height", String(h));
+                                }}
+                                className={cx(
+                                  "rounded-md border px-2 py-0.5 font-mono text-[11px] transition-colors",
+                                  active
+                                    ? "border-accent bg-accent/10 font-medium text-accent"
+                                    : "border-line bg-surface text-muted hover:text-ink",
+                                )}
+                              >
+                                {w} × {h}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-start gap-3">
+                      <Field label={t("editor.initDir")} className="min-w-0 flex-1">
+                        <Input
+                          mono
+                          placeholder={t("editor.initDirPlaceholder")}
+                          value={f.initDir}
+                          onChange={(e) => set("initDir", e.target.value)}
+                          onKeyDown={onEnter}
+                        />
+                      </Field>
+                      <Field
+                        label={t("editor.keepalive")}
+                        error={errors.keepaliveSeconds}
+                        hint={t("editor.keepaliveHint")}
+                        className="w-40 shrink-0"
+                      >
+                        <Input
+                          mono
+                          value={f.keepaliveSeconds}
+                          invalid={!!errors.keepaliveSeconds}
+                          onChange={(e) => set("keepaliveSeconds", e.target.value)}
+                          onKeyDown={onEnter}
+                        />
+                      </Field>
+                    </div>
+
+                    <Field
+                      label={t("editor.sftpSudo")}
+                      hint={t(f.sftpSudo === "default" ? "editor.sftpSudoHintDefault" : "editor.sftpSudoHint", {
+                        state: t(settings?.tools.sftp.sudo ? "editor.sftpSudo.on" : "editor.sftpSudo.off"),
+                      })}
+                    >
+                      <Segmented<SftpSudo>
+                        value={f.sftpSudo}
+                        onChange={(v) => set("sftpSudo", v)}
+                        className="flex w-full [&>button]:flex-1 [&>button]:justify-center"
+                        options={[
+                          { value: "default", label: t("editor.sftpSudo.default") },
+                          { value: "off", label: t("editor.sftpSudo.off") },
+                          { value: "on", label: t("editor.sftpSudo.on") },
+                        ]}
+                      />
+                    </Field>
+                  </>
+                )}
+              </div>
+
+              <Card className="divide-y divide-line [&>*]:px-4 [&>*]:py-3">
+                <SwitchRow
+                  title={t("editor.production")}
+                  badge={f.production ? <ProdBadge /> : undefined}
+                  desc={t(rdp ? "editor.productionDescRdp" : "editor.productionDesc")}
+                  checked={f.production}
+                  onChange={(v) => set("production", v)}
+                />
+                {rdp ? (
+                  <SwitchRow
+                    title={t("editor.clipboard")}
+                    desc={t("editor.clipboardDesc")}
+                    checked={f.clipboard}
+                    onChange={(v) => set("clipboard", v)}
+                  />
+                ) : (
+                  <SwitchRow
+                    title={t("editor.incognito")}
+                    badge={f.incognito ? <IncognitoBadge /> : undefined}
+                    desc={t("editor.incognitoDesc")}
+                    checked={f.incognito}
+                    onChange={(v) => set("incognito", v)}
+                  />
+                )}
+              </Card>
+            </>
+          )}
         </div>
-        <Field label={t("editor.note")}>
-          <textarea
-            rows={2}
-            spellCheck={false}
-            value={f.note}
-            onChange={(e) => set("note", e.target.value)}
-            className="w-full resize-none rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm outline-none transition-colors focus:border-accent focus:ring-3 focus:ring-accent/15"
-          />
-        </Field>
-      </Section>
-      <div className="h-2" />
+      </div>
+
       <KeysDialog
         open={!!manage}
         tab={manage ?? "keys"}
         onClose={() => setManage(null)}
         onAdded={(k) => set("keyId", k.id)}
         onAccountAdded={(a) => accountAllows(a, f.kind) && setAccount(a.id, a)}
+      />
+      <AccountEditor
+        open={quickNewAccount}
+        account={null}
+        onClose={() => setQuickNewAccount(false)}
+        onDone={(a) => accountAllows(a, f.kind) && setAccount(a.id, a)}
       />
     </Dialog>
   );

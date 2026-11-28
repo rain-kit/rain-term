@@ -86,27 +86,34 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
 
 export function Field({
   label,
+  extra,
   hint,
   error,
   className,
   children,
 }: {
-  label?: string;
+  label?: ReactNode;
+  extra?: ReactNode;
   hint?: ReactNode;
   error?: string;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <label className={cx("flex flex-col gap-1 min-w-0", className)}>
-      {label && <span className="text-xs font-medium text-muted">{label}</span>}
+    <div className={cx("flex flex-col gap-1 min-w-0", className)}>
+      {(label || extra) && (
+        <div className="flex items-center justify-between gap-2">
+          {label && <span className="text-xs font-medium text-muted">{label}</span>}
+          {extra}
+        </div>
+      )}
       {children}
       {error ? (
         <span className="text-xs text-red-600 dark:text-red-400">{error}</span>
       ) : hint ? (
         <span className="text-xs text-muted">{hint}</span>
       ) : null}
-    </label>
+    </div>
   );
 }
 
@@ -163,37 +170,248 @@ export function PasswordInput(props: Omit<InputProps, "type" | "suffix">) {
   );
 }
 
+export interface SelectOption<T extends string = string> {
+  value: T;
+  label: string;
+  /** 右侧辅助文字（如算法、地址、认证方式）。 */
+  sub?: string;
+  icon?: ReactNode;
+}
+
 export function Select<T extends string>({
   value,
   options,
   onChange,
   invalid,
+  disabled,
   className,
 }: {
   value: T;
-  options: { value: T; label: string }[];
+  options: SelectOption<T>[];
   onChange: (v: T) => void;
   invalid?: boolean;
+  disabled?: boolean;
   className?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const anchor = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
+
+  const currentIdx = Math.max(0, options.findIndex((o) => o.value === value));
+  const current = options[currentIdx] ?? options[0];
+
+  useLayoutEffect(() => {
+    if (!open || !anchor.current || !menu.current) return;
+    const a = anchor.current.getBoundingClientRect();
+    const m = menu.current.getBoundingClientRect();
+    const width = Math.max(a.width, Math.min(m.width, window.innerWidth - 16));
+    let top = a.bottom + 4;
+    if (top + m.height > window.innerHeight - 8 && a.top - m.height - 4 >= 8) {
+      top = a.top - m.height - 4;
+    }
+    const left = Math.max(8, Math.min(a.left, window.innerWidth - width - 8));
+    setPos({ top, left, width });
+  }, [open, options.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    setActive(currentIdx);
+    requestAnimationFrame(() => {
+      menu.current?.querySelector(`[data-idx="${currentIdx}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+  }, [open, currentIdx]);
+
+  useDismiss(open, menu, () => setOpen(false), anchor);
+
+  useEffect(() => {
+    if (!open || !options.length) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+        const next = (active + (e.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+        setActive(next);
+        menu.current?.querySelector(`[data-idx="${next}"]`)?.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        const picked = options[active];
+        if (picked) onChange(picked.value);
+        setOpen(false);
+        anchor.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, active, options, onChange]);
+
   return (
     <div className={cx("relative", className)}>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value as T)}
+      <button
+        ref={anchor}
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === " ")) {
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
         className={cx(
           inputBase,
-          invalid ? "border-red-500 focus:border-red-500 focus:ring-red-500/15" : "border-line",
-          "appearance-none truncate pr-8",
+          "flex items-center gap-2 pr-8 text-left",
+          invalid ? "border-red-500 focus:border-red-500 focus:ring-red-500/15" : open ? "border-accent ring-3 ring-accent/15" : "border-line",
         )}
       >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={15} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted" />
+        {current?.icon && <span className="shrink-0 text-muted">{current.icon}</span>}
+        <span className={cx("min-w-0 flex-1 truncate", !current?.value && options[0]?.value === "" && "text-muted")}>
+          {current?.label ?? ""}
+        </span>
+        {current?.sub && <span className="shrink-0 truncate max-w-36 font-mono text-xs text-muted">{current.sub}</span>}
+      </button>
+      <ChevronDown
+        size={15}
+        className={cx("pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted transition-transform", open && "rotate-180")}
+      />
+      {open &&
+        createPortal(
+          <div
+            ref={menu}
+            style={{ top: pos.top, left: pos.left, minWidth: pos.width, maxWidth: "min(28rem, calc(100vw - 16px))" }}
+            className="fixed z-50 max-h-60 overflow-y-auto animate-pop rounded-xl border border-line bg-surface p-1 shadow-xl"
+          >
+            {options.map((o, i) => {
+              const selected = o.value === value;
+              return (
+                <button
+                  key={`${i}:${o.value}`}
+                  type="button"
+                  data-idx={i}
+                  onMouseMove={() => i !== active && setActive(i)}
+                  onClick={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                  }}
+                  className={cx(
+                    "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors",
+                    i === active ? "bg-subtle text-ink" : "text-ink",
+                    selected && "font-medium",
+                  )}
+                >
+                  {o.icon && <span className="shrink-0 text-muted">{o.icon}</span>}
+                  <span className={cx("min-w-0 flex-1 truncate", !o.value && i === 0 && "text-muted")}>{o.label}</span>
+                  {o.sub && <span className="shrink-0 truncate max-w-44 font-mono text-[11px] text-muted">{o.sub}</span>}
+                  <span className="flex w-4 shrink-0 justify-center text-accent">{selected && <Check size={14} />}</span>
+                </button>
+              );
+            })}
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+/** 既可自由输入，又可从下拉列表选择已有项（如连接分组）。 */
+export function ComboInput({
+  value,
+  options,
+  placeholder,
+  emptyLabel,
+  onChange,
+  className,
+}: {
+  value: string;
+  options: string[];
+  placeholder?: string;
+  /** 下拉顶部用于清空的选项文案（如“不分组”）。 */
+  emptyLabel?: string;
+  onChange: (v: string) => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 0 });
+
+  useLayoutEffect(() => {
+    if (!open || !wrap.current || !menu.current) return;
+    const a = wrap.current.getBoundingClientRect();
+    const m = menu.current.getBoundingClientRect();
+    let top = a.bottom + 4;
+    if (top + m.height > window.innerHeight - 8 && a.top - m.height - 4 >= 8) {
+      top = a.top - m.height - 4;
+    }
+    setPos({ top, left: Math.max(8, Math.min(a.left, window.innerWidth - a.width - 8)), width: a.width });
+  }, [open, options.length]);
+
+  useDismiss(open, menu, () => setOpen(false), wrap);
+
+  const hasMenu = options.length > 0;
+  return (
+    <div ref={wrap} className={cx("relative", className)}>
+      <Input
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        suffix={
+          hasMenu ? (
+            <IconButton label={placeholder ?? ""} size="sm" type="button" tabIndex={-1} onClick={() => setOpen((v) => !v)}>
+              <ChevronDown size={15} className={cx("transition-transform", open && "rotate-180")} />
+            </IconButton>
+          ) : undefined
+        }
+      />
+      {open &&
+        hasMenu &&
+        createPortal(
+          <div
+            ref={menu}
+            style={{ top: pos.top, left: pos.left, width: pos.width }}
+            className="fixed z-50 max-h-52 overflow-y-auto animate-pop rounded-xl border border-line bg-surface p-1 shadow-xl"
+          >
+            {emptyLabel && (
+              <button
+                type="button"
+                onClick={() => {
+                  onChange("");
+                  setOpen(false);
+                }}
+                className={cx(
+                  "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-muted hover:bg-subtle hover:text-ink",
+                  !value.trim() && "font-medium text-ink",
+                )}
+              >
+                <span className="min-w-0 flex-1 truncate">{emptyLabel}</span>
+                <span className="flex w-4 shrink-0 justify-center text-accent">{!value.trim() && <Check size={14} />}</span>
+              </button>
+            )}
+            {options.map((g) => {
+              const selected = value.trim() === g;
+              return (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => {
+                    onChange(g);
+                    setOpen(false);
+                  }}
+                  className={cx(
+                    "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] hover:bg-subtle",
+                    selected && "font-medium",
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">{g}</span>
+                  <span className="flex w-4 shrink-0 justify-center text-accent">{selected && <Check size={14} />}</span>
+                </button>
+              );
+            })}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -235,12 +453,14 @@ export function Switch({
 /** 带标题和说明的开关行。 */
 export function SwitchRow({
   title,
+  badge,
   desc,
   checked,
   onChange,
   disabled,
 }: {
   title: string;
+  badge?: ReactNode;
   desc?: ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
@@ -249,7 +469,10 @@ export function SwitchRow({
   return (
     <div className="flex items-center gap-4">
       <div className="min-w-0 flex-1">
-        <div className="text-sm">{title}</div>
+        <div className="flex items-center gap-1.5 text-sm">
+          <span>{title}</span>
+          {badge}
+        </div>
         {desc && <div className="mt-0.5 text-xs text-muted">{desc}</div>}
       </div>
       <Switch checked={checked} onChange={onChange} disabled={disabled} label={title} />
@@ -322,9 +545,21 @@ export function IncognitoBadge() {
   );
 }
 
-export function Empty({ icon, title, desc, action }: { icon: ReactNode; title: string; desc?: string; action?: ReactNode }) {
+export function Empty({
+  icon,
+  title,
+  desc,
+  action,
+  compact,
+}: {
+  icon: ReactNode;
+  title: string;
+  desc?: string;
+  action?: ReactNode;
+  compact?: boolean;
+}) {
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
+    <div className={cx("flex flex-col items-center justify-center text-center", compact ? "py-10" : "py-16")}>
       <div className="mb-3 flex size-12 items-center justify-center rounded-2xl bg-subtle text-muted">{icon}</div>
       <div className="font-medium">{title}</div>
       {desc && <div className="mt-1 max-w-sm text-xs text-muted">{desc}</div>}
@@ -343,6 +578,8 @@ export function Dialog({
   onClose,
   title,
   width = "max-w-md",
+  divided,
+  bodyClassName,
   children,
   footer,
 }: {
@@ -350,6 +587,9 @@ export function Dialog({
   onClose?: () => void;
   title: ReactNode;
   width?: string;
+  /** 顶栏和底栏带分隔线，适合较复杂的表单和管理窗口。 */
+  divided?: boolean;
+  bodyClassName?: string;
   children: ReactNode;
   footer?: ReactNode;
 }) {
@@ -375,20 +615,24 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         className={cx(
-          "relative flex max-h-full w-full animate-pop flex-col rounded-2xl border border-line bg-surface shadow-2xl",
+          "relative flex max-h-full w-full animate-pop flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl",
           width,
         )}
       >
-        <div className="flex items-center gap-2 px-5 pt-4 pb-2">
-          <div className="flex-1 text-base font-semibold">{title}</div>
+        <div className={cx("flex shrink-0 items-center gap-2 px-5", divided ? "border-b border-line py-3.5" : "pt-4 pb-2")}>
+          <div className="min-w-0 flex-1 text-base font-semibold">{title}</div>
           {onClose && (
             <IconButton label={t("common.close")} size="sm" onClick={onClose}>
               <X size={16} />
             </IconButton>
           )}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-2">{children}</div>
-        {footer && <div className="flex justify-end gap-2 px-5 pt-2 pb-4">{footer}</div>}
+        <div className={cx("min-h-0 flex-1 overflow-y-auto", bodyClassName ?? (divided ? "px-5 py-4" : "px-5 py-2"))}>{children}</div>
+        {footer && (
+          <div className={cx("flex shrink-0 items-center justify-end gap-2 px-5", divided ? "border-t border-line bg-subtle/30 py-3" : "pt-2 pb-4")}>
+            {footer}
+          </div>
+        )}
       </div>
     </div>,
     document.body,
@@ -478,19 +722,41 @@ function MenuItems({ items, onPick }: { items: MenuItem[]; onPick: () => void })
   ));
 }
 
-/** 菜单打开时，点击菜单外、按 Esc、窗口失焦或改变大小都关闭菜单。 */
-function useDismiss(open: boolean, menu: RefObject<HTMLDivElement | null>, close: () => void) {
+/** 浮层打开时，点击浮层外、按 Esc（拦在捕获阶段避免同时关掉所在对话框）、滚动外部容器、窗口失焦或改变大小都关闭浮层。 */
+function useDismiss(open: boolean, menu: RefObject<HTMLElement | null>, close: () => void, anchor?: RefObject<HTMLElement | null>) {
+  const closeRef = useRef(close);
+  closeRef.current = close;
   useEffect(() => {
     if (!open) return;
-    const fn = (e: Event) => {
-      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
-      if (e.type === "mousedown" && menu.current?.contains(e.target as Node)) return;
-      close();
+    const dismiss = () => closeRef.current();
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (menu.current?.contains(target) || anchor?.current?.contains(target)) return;
+      dismiss();
     };
-    const types = ["mousedown", "keydown", "blur", "resize"] as const;
-    types.forEach((t) => window.addEventListener(t, fn));
-    return () => types.forEach((t) => window.removeEventListener(t, fn));
-  }, [open]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      dismiss();
+    };
+    const onScroll = (e: Event) => {
+      if (menu.current?.contains(e.target as Node)) return;
+      dismiss();
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.addEventListener("keydown", onKey, true);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [open, menu, anchor]);
 }
 
 export function Menu({
@@ -518,7 +784,7 @@ export function Menu({
     setPos({ top, left });
   }, [open]);
 
-  useDismiss(open, menu, () => setOpen(false));
+  useDismiss(open, menu, () => setOpen(false), anchor);
 
   return (
     <>

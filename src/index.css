@@ -34,7 +34,12 @@
 }
 
 @layer base {
+  :root {
+    color-scheme: light;
+  }
+
   .dark {
+    color-scheme: dark;
     --color-canvas: #0f1115;
     --color-surface: #171a20;
     --color-subtle: #1f232b;
