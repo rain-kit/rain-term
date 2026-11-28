@@ -3,7 +3,7 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { LoaderCircle, Maximize, Minimize, RotateCw } from "lucide-react";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { errorMessage, rdpApi } from "../lib/api";
-import { formatResolution } from "../lib/format";
+import { formatResolution, isMac } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { useToast } from "../lib/store";
 import type { RdpInput, RdpNotice } from "../lib/types";
@@ -309,6 +309,15 @@ export default function RdpView({
     e.stopPropagation();
     if (down && e.ctrlKey && e.altKey && e.code === "Enter") {
       toggleFullscreen();
+      return;
+    }
+    if (isMac && (e.code === "MetaLeft" || e.code === "MetaRight")) {
+      send({ t: "key", code: e.code === "MetaLeft" ? "ControlLeft" : "ControlRight", down });
+      return;
+    }
+    // macOS 按住 ⌘ 时其他键不触发 keyup，按下时直接补上松开，否则远程会卡键。
+    if (isMac && e.metaKey) {
+      if (down && e.code) send({ t: "key", code: e.code, down: true }, { t: "key", code: e.code, down: false });
       return;
     }
     if (e.code) send({ t: "key", code: e.code, down });

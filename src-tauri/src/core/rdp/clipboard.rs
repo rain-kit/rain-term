@@ -7,8 +7,10 @@ use ironrdp_cliprdr::pdu::{
 /// 剪贴板通道上需要会话循环处理的事情。
 #[derive(Debug, PartialEq)]
 pub enum ClipEvent {
-    /// 通道就绪或服务器要求重新通告本地剪贴板的格式。
+    /// 服务器要求通告本地剪贴板的格式；初始化阶段不回复，通道就一直不会就绪。
     Announce,
+    /// 服务器接受了初始化时的通告，通道就绪。
+    Ready,
     /// 远程复制了文本，需要取回内容。
     RemoteCopied,
     /// 远程要粘贴本地剪贴板的文本。
@@ -44,7 +46,9 @@ impl CliprdrBackend for TextClipboard {
         ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
     }
 
-    fn on_ready(&mut self) {}
+    fn on_ready(&mut self) {
+        self.events.push(ClipEvent::Ready);
+    }
 
     fn on_request_format_list(&mut self) {
         self.events.push(ClipEvent::Announce);

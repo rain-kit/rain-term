@@ -351,6 +351,9 @@ impl<E: FnMut(Event) + Send> Session<E> {
         for ev in events {
             match ev {
                 ClipEvent::Announce => self.announce().await?,
+                // 初始化期间本机复制的文字可能没赶上第一次通告。
+                ClipEvent::Ready if self.local_text.is_some() => self.announce().await?,
+                ClipEvent::Ready => {}
                 ClipEvent::RemoteCopied => {
                     let msgs = self
                         .cliprdr()
@@ -374,15 +377,13 @@ impl<E: FnMut(Event) + Send> Session<E> {
         Ok(())
     }
 
-    /// 告诉服务器本地剪贴板里有文本。
+    /// 告诉服务器本地剪贴板里有没有文本。初始化阶段的第一次通告会带上能力信息，服务器回复后通道才就绪。
     async fn announce(&mut self) -> Result<(), End> {
-        if self.local_text.is_none() {
-            return Ok(());
-        }
-        let msgs = self.cliprdr().and_then(|c| {
-            c.is_ready()
-                .then(|| c.initiate_copy(&[text_format()]))
-        });
+        let formats = match self.local_text {
+            Some(_) => vec![text_format()],
+            None => Vec::new(),
+        };
+        let msgs = self.cliprdr().map(|c| c.initiate_copy(&formats));
         self.svc(msgs).await
     }
 
@@ -484,6 +485,10 @@ impl<E: FnMut(Event) + Send> Session<E> {
                     return Ok(());
                 }
                 self.local_text = Some(text);
+                // 未就绪时由 Announce 或 Ready 带上，提前发会打乱初始化顺序。
+                if !self.cliprdr().is_some_and(|c| c.is_ready()) {
+                    return Ok(());
+                }
                 self.announce().await
             }
         }
